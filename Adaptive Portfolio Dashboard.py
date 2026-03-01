@@ -1424,8 +1424,31 @@ else:
 
 
 # =============================================================================
-# MAIN AREA
+# MAIN AREA (WITH PASSWORD PROTECTION)
 # =============================================================================
+
+# 1. Define your password here
+PASSWORD = "AdaptiveMatt$"
+
+# 2. Create a session state to track if the user is logged in
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+# 3. If not logged in, show the login screen
+if not st.session_state["authenticated"]:
+    st.title("🔐 Portfolio Dashboard Access")
+    user_input = st.text_input("Enter Password to View Strategy", type="password")
+    
+    if st.button("Login"):
+        if user_input == PASSWORD:
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Incorrect password. Please try again.")
+    st.stop() # This prevents the rest of the app from loading
+
+# --- EVERYTHING BELOW THIS LINE ONLY RUNS AFTER LOGIN ---
+
 
 st.title("Adaptive Portfolio Strategy Dashboard")
 
@@ -1588,11 +1611,11 @@ if run_button:
                     if balanced_returns is not None:
                         balanced_metrics = compute_metrics(balanced_returns.dropna(), rf_monthly=rf_monthly, daily_equity=balanced_daily_equity)
 
-                    try:
-                        append_to_excel(params, strat_metrics, bench_metrics, RESULTS_FILE)
-                        st.success(f"Results appended to **{os.path.basename(RESULTS_FILE)}**")
-                    except Exception as e:
-                        st.warning(f"Could not write to Excel (file may be open): {e}")
+                    # try:
+                    #   append_to_excel(params, strat_metrics, bench_metrics, RESULTS_FILE)
+                    #   st.success(f"Results appended to **{os.path.basename(RESULTS_FILE)}**")
+                    # except Exception as e:
+                    #   st.warning(f"Could not write to Excel (file may be open): {e}")
 
                     # ---- METRICS TABLE (moved to top of results) ----
                     st.subheader("Performance Summary")
