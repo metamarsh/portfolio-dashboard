@@ -1348,7 +1348,7 @@ st.sidebar.markdown("---")
 # Pre-filled defaults based on Portfolio Visualizer backfill mappings
 BACKFILL_DEFAULTS = [
     ("HGER",    "QCI"),
-    ("BTAL",    "VMNFX"),
+    ("BTAL",    "BAB"),
     ("BIL",     "VFISX"),
     ("TLT",     "VUSTX"),
     ("GLD",     "GOLD"),
