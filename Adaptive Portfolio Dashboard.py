@@ -87,6 +87,34 @@ MAIN_LOOKBACK_OPTIONS = {
 BENCHMARK_TICKER = "SPY"
 INITIAL_CAPITAL = 10_000
 
+# ---- Brand colors (mirrors the Asymmetric Edge newsletter palette) ----
+# Series colors are consistent across every chart in the dashboard:
+#   Strategy = brand purple, SPY = muted indigo, 60/40 = brand teal.
+# Categorical colors reuse teal (positive / risk-on) and purple (negative /
+# risk-off), matching the asset class chart convention in app.py.
+BRAND_PURPLE = "#3A0CA3"        # Strategy / primary
+BRAND_PURPLE_FADE = "#8B7BC9"   # Lightened purple for secondary lines (e.g. 24mo Sortino)
+BRAND_INDIGO = "#5068B5"        # SPY / benchmark
+BRAND_TEAL = "#30C7B5"          # 60/40 / positive regime
+BRAND_STEEL = "#6A9BAD"         # 80/20 / steel blue-green (matches newsletter)
+BRAND_RED = "#9E2A2B"           # Loss / drawdown / risk-off semantic
+BRAND_GRAY = "#A8A8A8"          # Neutral / reference lines
+BRAND_TEXT = "#484848"          # Charcoal text
+BRAND_HIGHLIGHT_BG = "#F0EDF8"  # Light purple tint for selected table rows
+
+# ---- Balanced benchmarks ----
+# Benchmarks shown alongside SPY in the equity, drawdown, and metrics
+# tables. Edit this list to swap, add, or remove benchmarks. Each entry:
+#   label      shown in legends and the metrics table column header
+#   ticker     Yahoo Finance ticker (must be downloadable)
+#   color      matplotlib color (use a BRAND_* constant or a hex string)
+#   linestyle  matplotlib line style ("-", "--", "-.", ":")
+# Set to [] to disable balanced benchmarks entirely.
+BAL_BENCHMARKS = [
+    {"label": "60/40", "ticker": "AOR", "color": BRAND_TEAL,  "linestyle": "--"},
+    {"label": "80/20", "ticker": "AOA", "color": BRAND_STEEL, "linestyle": "-."},
+]
+
 _base_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in dir() else "."
 RESULTS_FILE = os.path.join(_base_dir, "Backtest Results Log.xlsx")
 CACHE_DIR = os.path.join(_base_dir, "price_cache")
@@ -427,6 +455,111 @@ def compute_risk_parity_weights(daily_prices, selected_tickers, as_of_date, vol_
     return weights
 
 
+def compute_leverage_signal(daily_prices, as_of_date, leverage_params,
+                            final_holdings=None):
+    """
+    Compute a leverage multiplier using one of two methods.
+
+    Method 'holdings_gate':
+        Binary approach. If any defensive tickers (e.g., BIL, BTAL) are
+        present in the final holdings, leverage = 1.0x (the strategy is
+        already signaling caution). Otherwise, apply the configured
+        multiplier. No external data needed.
+
+    Method 'vt_trend':
+        Uses a global equity ETF's moving averages to assess trend.
+        Risk-on (price > long SMA and short SMA rising) -> leverage up.
+        Neutral (price > long SMA but short SMA falling) -> 1.0x.
+        Risk-off (price < long SMA) -> scale down.
+
+    Returns:
+        (multiplier, regime_label, detail_dict)
+    """
+    if not leverage_params.get("enabled", False):
+        return 1.0, "off", {}
+
+    method = leverage_params.get("method", "holdings_gate")
+
+    # ------------------------------------------------------------------
+    # METHOD: Constant
+    # ------------------------------------------------------------------
+    if method == "constant":
+        mult = leverage_params.get("mult_constant", 1.25)
+        return mult, "constant", {"leveraged": True}
+
+    # ------------------------------------------------------------------
+    # METHOD: Holdings gate
+    # ------------------------------------------------------------------
+    elif method == "holdings_gate":
+        defensive_tickers = leverage_params.get("defensive_tickers", ["BIL", "BTAL"])
+        mult_leveraged = leverage_params.get("mult_leveraged", 1.25)
+
+        if final_holdings is None:
+            return 1.0, "no holdings", {}
+
+        defensives_held = [t for t in defensive_tickers if t in final_holdings]
+
+        if defensives_held:
+            return 1.0, "defensive", {
+                "defensives_held": defensives_held,
+                "leveraged": False,
+            }
+        else:
+            return mult_leveraged, "leveraged", {
+                "defensives_held": [],
+                "leveraged": True,
+            }
+
+    # ------------------------------------------------------------------
+    # METHOD: VT trend
+    # ------------------------------------------------------------------
+    elif method == "vt_trend":
+        ticker = leverage_params["ticker"]
+        long_sma = leverage_params["long_sma"]
+        short_sma = leverage_params["short_sma"]
+        slope_lookback = leverage_params["slope_lookback"]
+
+        if ticker not in daily_prices.columns:
+            return 1.0, "no data", {}
+
+        prices = daily_prices[ticker].loc[:as_of_date].dropna()
+
+        min_needed = max(long_sma, short_sma + slope_lookback) + 10
+        if len(prices) < min_needed:
+            return 1.0, "insufficient history", {}
+
+        current_price = prices.iloc[-1]
+        long_sma_val = prices.iloc[-long_sma:].mean()
+        short_sma_now = prices.iloc[-short_sma:].mean()
+
+        prices_earlier = prices.iloc[:-(slope_lookback)]
+        if len(prices_earlier) < short_sma:
+            return 1.0, "insufficient history", {}
+        short_sma_prev = prices_earlier.iloc[-short_sma:].mean()
+
+        price_above_long = current_price > long_sma_val
+        short_sma_rising = short_sma_now > short_sma_prev
+
+        detail = {
+            "price": current_price,
+            "long_sma": long_sma_val,
+            "short_sma_now": short_sma_now,
+            "short_sma_prev": short_sma_prev,
+            "price_above_long": price_above_long,
+            "short_sma_rising": short_sma_rising,
+        }
+
+        if price_above_long and short_sma_rising:
+            return leverage_params["mult_risk_on"], "risk-on", detail
+        elif not price_above_long:
+            return leverage_params["mult_risk_off"], "risk-off", detail
+        else:
+            return leverage_params["mult_neutral"], "neutral", detail
+
+    # Unknown method
+    return 1.0, "unknown", {}
+
+
 def run_backtest(daily_prices, monthly_prices, params):
     """
     Run the adaptive portfolio backtest with the given parameters.
@@ -446,6 +579,7 @@ def run_backtest(daily_prices, monthly_prices, params):
     vol_months = params["vol_months"]
     backtest_start = params["backtest_start"]
     backtest_end = params.get("backtest_end", "")
+    leverage_params = params.get("leverage_params", {"enabled": False})
 
     min_lookback = max(main_lookbacks)
     valid_months = monthly_prices.index[min_lookback:]
@@ -548,12 +682,28 @@ def run_backtest(daily_prices, monthly_prices, params):
             port_return += w * asset_ret
             holding_details[t] = {"weight": w, "return": asset_ret}
 
+        # --- Dynamic leverage ---
+        lev_mult, lev_regime, lev_detail = compute_leverage_signal(
+            daily_prices, rebal_date, leverage_params,
+            final_holdings=final_holdings
+        )
+        port_return_raw = port_return
+        port_return = port_return * lev_mult
+
+        # Borrowing cost on leveraged portion (only when actually leveraged)
+        lev_cost_annual = leverage_params.get("leverage_cost_annual", 0.0)
+        monthly_borrow_cost = 0.0
+        if lev_mult > 1.0 and lev_cost_annual > 0:
+            monthly_borrow_cost = (lev_mult - 1.0) * (lev_cost_annual / 12.0)
+            port_return -= monthly_borrow_cost
+
         # --- Daily equity tracking for this holding period ---
         holding_mask = (
             (daily_prices.index >= exec_date_entry)
             & (daily_prices.index <= exec_date_exit)
         )
         holding_days = daily_prices.index[holding_mask]
+        n_holding_days = len(holding_days)
 
         # Entry prices for each held asset (computed once per period)
         entry_px = {}
@@ -562,7 +712,7 @@ def run_backtest(daily_prices, monthly_prices, params):
             if len(ep) > 0 and ep.iloc[-1] != 0:
                 entry_px[t] = ep.iloc[-1]
 
-        for day in holding_days:
+        for day_idx, day in enumerate(holding_days):
             day_weighted_return = 0.0
             for t in final_holdings:
                 if t not in entry_px:
@@ -573,8 +723,12 @@ def run_backtest(daily_prices, monthly_prices, params):
                 day_weighted_return += weights.get(t, 0.0) * (
                     (dp.iloc[-1] / entry_px[t]) - 1.0
                 )
+            # Accrue borrowing cost pro-rata through the holding period
+            accrued_cost = 0.0
+            if n_holding_days > 0 and monthly_borrow_cost > 0:
+                accrued_cost = monthly_borrow_cost * (day_idx + 1) / n_holding_days
             daily_portfolio_values[day] = (
-                cumulative_multiplier * (1 + day_weighted_return) * INITIAL_CAPITAL
+                cumulative_multiplier * (1 + day_weighted_return * lev_mult - accrued_cost) * INITIAL_CAPITAL
             )
 
         # Update cumulative multiplier at period end
@@ -583,6 +737,8 @@ def run_backtest(daily_prices, monthly_prices, params):
         results.append({
             "date": next_month_end,
             "portfolio_return": port_return,
+            "leverage_mult": lev_mult,
+            "borrow_cost": monthly_borrow_cost,
         })
 
         holdings_str_parts = []
@@ -600,6 +756,8 @@ def run_backtest(daily_prices, monthly_prices, params):
             "basket": ", ".join(basket),
             "equities_selected": ", ".join(selected_equities) if selected_equities else "N/A",
             "final_holdings": " | ".join(holdings_str_parts),
+            "leverage": f"{lev_mult:.2f}x",
+            "lev_regime": lev_regime,
             "portfolio_return": f"{port_return:+.2%}",
         })
 
@@ -627,11 +785,16 @@ def run_backtest(daily_prices, monthly_prices, params):
     return results_df, trade_df, daily_equity
 
 
-def compute_current_signals(daily_prices, monthly_prices, params):
+def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
+                       full_details=True):
     """
-    Compute model signals as of the most recent month-end.
-    Returns a dict with signal_date, asset details table, equity selections,
-    final holdings, and weights.
+    Compute the model signal as of a specific date. Internal helper used by
+    compute_current_signals to compute both the live signal (using the most
+    recent daily bar) and reference signals (e.g., the previous month-end).
+
+    When full_details=False, the asset_details table is skipped and only the
+    holdings/weights/equity picks are returned. Used for lightweight reference
+    signals where the full ranking table isn't needed.
     """
     fixed_tickers = params["fixed_tickers"]
     equity_tickers = params["equity_tickers"]
@@ -644,13 +807,12 @@ def compute_current_signals(daily_prices, monthly_prices, params):
     vol_months = params["vol_months"]
 
     min_lookback = max(main_lookbacks)
-    signal_date = monthly_prices.index[-1]
 
-    # Build basket (same logic as backtest)
+    # Build basket
     basket = []
     for t in fixed_tickers:
-        if t in monthly_prices.columns:
-            ps = monthly_prices[t].loc[:signal_date].dropna()
+        if t in monthly_prices_local.columns:
+            ps = monthly_prices_local[t].loc[:signal_date].dropna()
             if len(ps) > min_lookback:
                 basket.append(t)
 
@@ -658,83 +820,84 @@ def compute_current_signals(daily_prices, monthly_prices, params):
     if equity_top_n > 0 and len(equity_tickers) > 0:
         eq_available = []
         for t in equity_tickers:
-            if t in monthly_prices.columns:
-                ps = monthly_prices[t].loc[:signal_date].dropna()
+            if t in monthly_prices_local.columns:
+                ps = monthly_prices_local[t].loc[:signal_date].dropna()
                 min_eq_history = max(max(equity_lookbacks), min_lookback)
                 if len(ps) > min_eq_history:
                     eq_available.append(t)
 
-        eq_scores = {}
         if len(eq_available) >= equity_top_n:
-            eq_subset = monthly_prices[eq_available].loc[:signal_date]
-            eq_mom = compute_blended_momentum(eq_subset, equity_lookbacks, equity_lookback_weights)
+            eq_subset = monthly_prices_local[eq_available].loc[:signal_date]
+            eq_mom = compute_blended_momentum(
+                eq_subset, equity_lookbacks, equity_lookback_weights
+            )
             latest_eq = eq_mom.iloc[-1].dropna().sort_values(ascending=False)
             selected_equities = latest_eq.head(equity_top_n).index.tolist()
-            eq_scores = latest_eq.to_dict()
 
         basket.extend(selected_equities)
 
     if len(basket) == 0:
         return None
 
-    # Compute individual lookback scores for every asset in the full universe
-    all_assets = list(set(fixed_tickers + equity_tickers))
-    all_assets = [t for t in all_assets if t in monthly_prices.columns]
-
     asset_details = []
-    for t in all_assets:
-        ps = monthly_prices[t].loc[:signal_date].dropna()
-        if len(ps) < min_lookback + 1:
-            continue
+    if full_details:
+        all_assets = list(set(fixed_tickers + equity_tickers))
+        all_assets = [t for t in all_assets if t in monthly_prices_local.columns]
 
-        row = {"Asset": t, "In Basket": t in basket}
+        for t in all_assets:
+            ps = monthly_prices_local[t].loc[:signal_date].dropna()
+            if len(ps) < min_lookback + 1:
+                continue
 
-        # Individual main lookback scores
-        for lb in sorted(set(main_lookbacks)):
-            ret = compute_total_return(monthly_prices[[t]].loc[:signal_date], lb)
-            val = ret.iloc[-1].values[0] if len(ret) > 0 else np.nan
-            row[f"{lb}mo Return"] = val
+            row = {"Asset": t, "In Basket": t in basket}
 
-        # Blended main score
-        basket_sub = monthly_prices[[t]].loc[:signal_date]
-        blended = compute_blended_momentum(basket_sub, main_lookbacks, main_lookback_weights)
-        blended_val = blended.iloc[-1].values[0] if len(blended) > 0 else np.nan
-        row["Blended Score"] = blended_val
+            for lb in sorted(set(main_lookbacks)):
+                ret = compute_total_return(
+                    monthly_prices_local[[t]].loc[:signal_date], lb
+                )
+                val = ret.iloc[-1].values[0] if len(ret) > 0 else np.nan
+                row[f"{lb}mo Return"] = val
 
-        # Annualized volatility
-        lookback_start = signal_date - pd.DateOffset(months=vol_months)
-        vol_subset = daily_prices[t].loc[lookback_start:signal_date].dropna()
-        if len(vol_subset) > 20:
-            daily_ret = vol_subset.pct_change().dropna()
-            ann_vol = daily_ret.std() * np.sqrt(252)
-            row[f"{vol_months}mo Vol (ann)"] = ann_vol
-        else:
-            row[f"{vol_months}mo Vol (ann)"] = np.nan
+            basket_sub = monthly_prices_local[[t]].loc[:signal_date]
+            blended = compute_blended_momentum(
+                basket_sub, main_lookbacks, main_lookback_weights
+            )
+            blended_val = blended.iloc[-1].values[0] if len(blended) > 0 else np.nan
+            row["Blended Score"] = blended_val
 
-        asset_details.append(row)
+            lookback_start = signal_date - pd.DateOffset(months=vol_months)
+            vol_subset = daily_prices[t].loc[lookback_start:signal_date].dropna()
+            if len(vol_subset) > 20:
+                daily_ret = vol_subset.pct_change().dropna()
+                ann_vol = daily_ret.std() * np.sqrt(252)
+                row[f"{vol_months}mo Vol (ann)"] = ann_vol
+            else:
+                row[f"{vol_months}mo Vol (ann)"] = np.nan
+
+            asset_details.append(row)
 
     # Rank basket by blended momentum
-    basket_monthly = monthly_prices[basket].loc[:signal_date].copy()
-    basket_mom = compute_blended_momentum(basket_monthly, main_lookbacks, main_lookback_weights)
+    basket_monthly = monthly_prices_local[basket].loc[:signal_date].copy()
+    basket_mom = compute_blended_momentum(
+        basket_monthly, main_lookbacks, main_lookback_weights
+    )
     latest_basket = basket_mom.iloc[-1].dropna().sort_values(ascending=False)
 
     n_select = min(final_top_n, len(latest_basket))
     final_holdings = latest_basket.head(n_select).index.tolist()
 
-    # Risk parity weights
     weights = compute_risk_parity_weights(
         daily_prices, final_holdings, signal_date, vol_months
     )
 
-    # Mark selected and add weights to details
-    for row in asset_details:
-        t = row["Asset"]
-        row["Selected"] = t in final_holdings
-        row["Weight"] = weights.get(t, 0.0) if t in final_holdings else 0.0
-        row["Equity Pick"] = t in selected_equities
+    if full_details:
+        for row in asset_details:
+            t = row["Asset"]
+            row["Selected"] = t in final_holdings
+            row["Weight"] = weights.get(t, 0.0) if t in final_holdings else 0.0
+            row["Equity Pick"] = t in selected_equities
 
-    # Sort by blended score descending
-    asset_details.sort(key=lambda x: x.get("Blended Score", -999), reverse=True)
+        asset_details.sort(key=lambda x: x.get("Blended Score", -999), reverse=True)
 
     return {
         "signal_date": signal_date,
@@ -743,6 +906,75 @@ def compute_current_signals(daily_prices, monthly_prices, params):
         "final_holdings": final_holdings,
         "weights": weights,
         "basket": basket,
+    }
+
+
+def compute_current_signals(daily_prices, monthly_prices, params):
+    """
+    Compute model signals for the most recent available trading date.
+    The table answers: "If I rebalanced today, what should I hold?"
+
+    Returns a dict containing:
+        signal_date           the most recent trading date (live rebalance moment)
+        asset_details         full per-asset ranking table for the live signal
+        selected_equities     equity ETFs selected this period
+        final_holdings        list of tickers held in the live signal
+        weights               dict of {ticker: weight} for the live signal
+        basket                full basket of eligible tickers
+        prev_month_end_date   the most recent COMPLETED calendar month-end
+                              (None if no prior month-end is available)
+        prev_holdings         list of tickers from the prev month-end signal
+        prev_weights          dict of {ticker: weight} from the prev month-end signal
+    """
+    # ---- LIVE SIGNAL ----
+    # Use the most recent daily bar as the signal date. If that date falls
+    # inside an incomplete calendar month, the resampled monthly bin for
+    # that month carries a future-dated label (e.g., "2026-04-30" while we
+    # only have data through 2026-04-28). The bin already contains the
+    # most recent close (forward-filled), so we just relabel its index to
+    # last_daily so all date-based slicing matches the actual data window.
+    last_daily = daily_prices.index.max()
+    candidate = monthly_prices.index[-1]
+    if candidate > last_daily:
+        new_index = list(monthly_prices.index[:-1]) + [last_daily]
+        effective_monthly = monthly_prices.copy()
+        effective_monthly.index = pd.DatetimeIndex(new_index)
+        signal_date = last_daily
+    else:
+        effective_monthly = monthly_prices
+        signal_date = candidate
+
+    live = _compute_signal_at(
+        daily_prices, effective_monthly, params, signal_date, full_details=True
+    )
+    if live is None:
+        return None
+
+    # ---- PREVIOUS MONTH-END SIGNAL (reference) ----
+    # Find the most recent completed calendar month-end (a true month-end
+    # in the original monthly_prices index that is at or before last_daily,
+    # but not equal to the live signal date). This documents what the model
+    # was holding heading into the current month for continuity context.
+    prev_month_end_date = None
+    prev_holdings = []
+    prev_weights = {}
+    completed = monthly_prices.index[monthly_prices.index <= last_daily]
+    prev_candidates = [d for d in completed if d != signal_date]
+    if len(prev_candidates) > 0:
+        prev_month_end_date = prev_candidates[-1]
+        prev = _compute_signal_at(
+            daily_prices, monthly_prices, params, prev_month_end_date,
+            full_details=False
+        )
+        if prev is not None:
+            prev_holdings = prev["final_holdings"]
+            prev_weights = prev["weights"]
+
+    return {
+        **live,
+        "prev_month_end_date": prev_month_end_date,
+        "prev_holdings": prev_holdings,
+        "prev_weights": prev_weights,
     }
 
 
@@ -806,6 +1038,15 @@ def compute_metrics(monthly_returns, rf_monthly=None, daily_equity=None):
         trough_date = None
         peak_date = None
 
+    # Worst single-day decline (close-to-close)
+    if daily_equity is not None and len(daily_equity) > 1:
+        daily_pct = daily_equity.pct_change().dropna()
+        worst_day = daily_pct.min()
+        worst_day_date = daily_pct.idxmin()
+    else:
+        worst_day = np.nan
+        worst_day_date = None
+
     # Fix 8: Filter partial years for best/worst year
     r_copy = r.copy()
     r_copy.index = pd.to_datetime(r_copy.index)
@@ -829,6 +1070,8 @@ def compute_metrics(monthly_returns, rf_monthly=None, daily_equity=None):
         "Max Drawdown (Daily)": max_dd_daily,
         "DD Peak Date": peak_date,
         "DD Trough Date": trough_date,
+        "Worst Day": worst_day,
+        "Worst Day Date": worst_day_date,
         "Calmar Ratio": calmar,
         "Best Year": best_year,
         "Worst Year": worst_year,
@@ -843,6 +1086,27 @@ def compute_metrics(monthly_returns, rf_monthly=None, daily_equity=None):
 # =============================================================================
 
 def append_to_excel(params, strat_metrics, bench_metrics, filepath):
+    lev = params.get("leverage_params", {})
+    lev_summary = "Off"
+    if lev.get("enabled"):
+        if lev.get("method") == "constant":
+            cost_pct = lev.get("leverage_cost_annual", 0.0) * 100
+            lev_summary = f"Constant: {lev.get('mult_constant', 1.25):.2f}x, cost={cost_pct:.1f}%"
+        elif lev.get("method") == "holdings_gate":
+            defensives = ", ".join(lev.get("defensive_tickers", []))
+            cost_pct = lev.get("leverage_cost_annual", 0.0) * 100
+            lev_summary = (
+                f"Holdings gate: defensives={defensives}, "
+                f"mult={lev.get('mult_leveraged', 1.25):.2f}x, "
+                f"cost={cost_pct:.1f}%"
+            )
+        elif lev.get("method") == "vt_trend":
+            lev_summary = (
+                f"VT trend: {lev['ticker']} {lev['long_sma']}/{lev['short_sma']}d SMA, "
+                f"slope {lev['slope_lookback']}d, "
+                f"on={lev['mult_risk_on']:.2f}/off={lev['mult_risk_off']:.2f}"
+            )
+
     row = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "Fixed Assets": ", ".join(params["fixed_tickers"]),
@@ -853,6 +1117,7 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
         "Main Lookback": params["main_lookback_label"],
         "Final Top N": params["final_top_n"],
         "Vol Window (months)": params["vol_months"],
+        "Leverage": lev_summary,
         "Backtest Start": params["backtest_start"],
         "Backtest End": params.get("backtest_end", ""),
         "Period": strat_metrics.get("Period", ""),
@@ -888,7 +1153,7 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
 # PLOTTING
 # =============================================================================
 
-def plot_equity_and_drawdown(strat_returns, bench_returns, balanced_returns=None):
+def plot_equity_and_drawdown(strat_returns, bench_returns, balanced_data=None):
     common_idx = strat_returns.index.intersection(bench_returns.index)
     strat = strat_returns.loc[common_idx]
     bench = bench_returns.loc[common_idx]
@@ -896,45 +1161,59 @@ def plot_equity_and_drawdown(strat_returns, bench_returns, balanced_returns=None
     strat_cum = INITIAL_CAPITAL * (1 + strat).cumprod()
     bench_cum = INITIAL_CAPITAL * (1 + bench).cumprod()
 
-    # 60/40 if available
-    bal_cum = None
-    if balanced_returns is not None:
-        bal = balanced_returns.reindex(common_idx).dropna()
-        if len(bal) > 0:
-            bal_cum = INITIAL_CAPITAL * (1 + bal).cumprod()
+    # Build cumulative series for each balanced benchmark that has data
+    bal_plots = []
+    if balanced_data:
+        for entry in balanced_data:
+            bal = entry["returns"].reindex(common_idx).dropna()
+            if len(bal) > 0:
+                bal_plots.append({**entry, "cum": INITIAL_CAPITAL * (1 + bal).cumprod()})
 
     fig, axes = plt.subplots(2, 1, figsize=(12, 7), gridspec_kw={"height_ratios": [3, 1]})
-    fig.suptitle("Adaptive Strategy vs. SPY vs. 60/40", fontsize=14, fontweight="bold", y=0.97)
+    title_parts = ["Adaptive Strategy", "SPY"] + [e["label"] for e in bal_plots]
+    fig.suptitle("Adaptive Strategy vs. " + " vs. ".join(title_parts[1:]),
+                 fontsize=14, fontweight="bold", y=0.97)
 
     ax1 = axes[0]
-    ax1.plot(strat_cum.index, strat_cum.values, label="Strategy", linewidth=1.8, color="#1a5276")
-    ax1.plot(bench_cum.index, bench_cum.values, label="SPY", linewidth=1.2, color="#aab7b8", alpha=0.8)
-    if bal_cum is not None:
-        ax1.plot(bal_cum.index, bal_cum.values, label="60/40", linewidth=0.9, color="#d4a574", alpha=0.55, linestyle="--")
+    ax1.plot(strat_cum.index, strat_cum.values, label="Strategy", linewidth=2.8, color=BRAND_PURPLE)
+    ax1.plot(bench_cum.index, bench_cum.values, label="SPY", linewidth=2.0, color=BRAND_INDIGO, alpha=0.85)
+    for entry in bal_plots:
+        ax1.plot(
+            entry["cum"].index, entry["cum"].values,
+            label=entry["label"], linewidth=1.6,
+            color=entry["color"], linestyle=entry["linestyle"], alpha=0.75,
+        )
     ax1.set_ylabel(f"Growth of ${INITIAL_CAPITAL:,}")
     ax1.legend(loc="upper left")
     ax1.grid(True, alpha=0.3)
     ax1.set_yscale("log")
-    ax1.yaxis.set_major_formatter(mtick.FuncFormatter(lambda x, _: f"${x:,.0f}"))
+    dollar_fmt = mtick.FuncFormatter(lambda x, _: f"${x:,.0f}")
+    ax1.yaxis.set_major_formatter(dollar_fmt)
+    ax1.yaxis.set_minor_formatter(dollar_fmt)
 
     ax2 = axes[1]
     wealth = (1 + strat).cumprod()
     peak = wealth.cummax()
     dd = (wealth - peak) / peak
-    ax2.fill_between(dd.index, dd.values, 0, color="#c0392b", alpha=0.4, label="Strategy")
+    ax2.plot(dd.index, dd.values, color=BRAND_PURPLE, linewidth=1.8, label="Strategy")
 
     wealth_b = (1 + bench).cumprod()
     peak_b = wealth_b.cummax()
     dd_b = (wealth_b - peak_b) / peak_b
-    ax2.fill_between(dd_b.index, dd_b.values, 0, color="#aab7b8", alpha=0.3, label="SPY")
+    ax2.plot(dd_b.index, dd_b.values, color=BRAND_INDIGO, linewidth=1.4, label="SPY")
 
-    if balanced_returns is not None:
-        bal = balanced_returns.reindex(common_idx).dropna()
-        if len(bal) > 0:
-            wealth_bal = (1 + bal).cumprod()
-            peak_bal = wealth_bal.cummax()
-            dd_bal = (wealth_bal - peak_bal) / peak_bal
-            ax2.fill_between(dd_bal.index, dd_bal.values, 0, color="#d4a574", alpha=0.2, label="60/40")
+    for entry in bal_plots:
+        bal = entry["returns"].reindex(common_idx).dropna()
+        if len(bal) == 0:
+            continue
+        wealth_bal = (1 + bal).cumprod()
+        peak_bal = wealth_bal.cummax()
+        dd_bal = (wealth_bal - peak_bal) / peak_bal
+        ax2.plot(
+            dd_bal.index, dd_bal.values,
+            color=entry["color"], linewidth=1.4,
+            linestyle=entry["linestyle"], label=entry["label"],
+        )
 
     ax2.set_ylabel("Drawdown")
     ax2.legend(loc="lower left", fontsize=8)
@@ -945,7 +1224,7 @@ def plot_equity_and_drawdown(strat_returns, bench_returns, balanced_returns=None
     return fig
 
 
-def plot_daily_drawdown(daily_equity, daily_equity_bench=None, daily_equity_balanced=None):
+def plot_daily_drawdown(daily_equity, daily_equity_bench=None, balanced_data=None):
     """Plot daily drawdown chart from daily equity curves."""
     if daily_equity is None or len(daily_equity) == 0:
         return None
@@ -955,17 +1234,26 @@ def plot_daily_drawdown(daily_equity, daily_equity_bench=None, daily_equity_bala
 
     fig, ax = plt.subplots(figsize=(12, 4))
     fig.suptitle("Daily Drawdown (close-to-close)", fontsize=14, fontweight="bold")
-    ax.fill_between(dd.index, dd.values, 0, color="#c0392b", alpha=0.4, label="Strategy")
+    ax.fill_between(dd.index, dd.values, 0, color=BRAND_PURPLE, alpha=0.18)
+    ax.plot(dd.index, dd.values, color=BRAND_PURPLE, linewidth=1.8, label="Strategy")
 
     if daily_equity_bench is not None and len(daily_equity_bench) > 0:
         peak_b = daily_equity_bench.cummax()
         dd_b = (daily_equity_bench - peak_b) / peak_b
-        ax.fill_between(dd_b.index, dd_b.values, 0, color="#aab7b8", alpha=0.3, label="SPY")
+        ax.plot(dd_b.index, dd_b.values, color=BRAND_INDIGO, linewidth=1.4, label="SPY")
 
-    if daily_equity_balanced is not None and len(daily_equity_balanced) > 0:
-        peak_bal = daily_equity_balanced.cummax()
-        dd_bal = (daily_equity_balanced - peak_bal) / peak_bal
-        ax.fill_between(dd_bal.index, dd_bal.values, 0, color="#d4a574", alpha=0.2, label="60/40")
+    if balanced_data:
+        for entry in balanced_data:
+            de = entry.get("daily_equity")
+            if de is None or len(de) == 0:
+                continue
+            peak_bal = de.cummax()
+            dd_bal = (de - peak_bal) / peak_bal
+            ax.plot(
+                dd_bal.index, dd_bal.values,
+                color=entry["color"], linewidth=1.4,
+                linestyle=entry["linestyle"], label=entry["label"],
+            )
 
     ax.set_ylabel("Drawdown")
     ax.legend(loc="lower left", fontsize=8)
@@ -997,11 +1285,12 @@ def plot_annual_returns(strat_returns, bench_returns):
 
     bars_strat = ax.bar(
         x - bar_width / 2, strat_yearly.values, bar_width,
-        label="Strategy", color="#2e4057", edgecolor="white", linewidth=0.5
+        label="Strategy", color=BRAND_PURPLE, edgecolor="white", linewidth=0.7
     )
     bars_bench = ax.bar(
         x + bar_width / 2, bench_yearly.values, bar_width,
-        label="SPY", color="#62c4b2", edgecolor="white", linewidth=0.5
+        label="SPY", color=BRAND_INDIGO, edgecolor="white", linewidth=0.7,
+        hatch="///"
     )
 
     # Add value labels on each bar
@@ -1011,7 +1300,7 @@ def plot_annual_returns(strat_returns, bench_returns):
             bar.get_x() + bar.get_width() / 2, h,
             f"{h:.1%}", ha="center",
             va="bottom" if h >= 0 else "top",
-            fontsize=7, fontweight="bold", color="#2e4057"
+            fontsize=10, fontweight="bold", color=BRAND_PURPLE
         )
     for bar in bars_bench:
         h = bar.get_height()
@@ -1019,7 +1308,7 @@ def plot_annual_returns(strat_returns, bench_returns):
             bar.get_x() + bar.get_width() / 2, h,
             f"{h:.1%}", ha="center",
             va="bottom" if h >= 0 else "top",
-            fontsize=7, fontweight="bold", color="#62c4b2"
+            fontsize=10, fontweight="bold", color=BRAND_INDIGO
         )
 
     ax.set_xticks(x)
@@ -1029,7 +1318,8 @@ def plot_annual_returns(strat_returns, bench_returns):
     ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
     ax.axhline(0, color="black", linewidth=0.5)
     ax.legend(loc="upper left")
-    ax.grid(True, axis="y", alpha=0.3)
+    ax.set_axisbelow(True)
+    ax.grid(True, axis="y", alpha=0.25)
 
     plt.tight_layout()
     return fig
@@ -1112,12 +1402,12 @@ def plot_rolling_sortino(strat_returns, bench_returns, rf_monthly=None):
     fig, ax = plt.subplots(figsize=(12, 4.5))
     fig.suptitle("Rolling Sortino Ratio", fontsize=14, fontweight="bold")
 
-    ax.plot(strat_36.index, strat_36.values, label="Strategy (36mo)", linewidth=2.0, color="#1a5276")
-    ax.plot(strat_24.index, strat_24.values, label="Strategy (24mo)", linewidth=1.0, color="#5dade2", alpha=0.5)
-    ax.plot(bench_36.index, bench_36.values, label="SPY (36mo)", linewidth=1.8, color="#e67e22", linestyle="--")
+    ax.plot(strat_36.index, strat_36.values, label="Strategy (36mo)", linewidth=2.0, color=BRAND_PURPLE)
+    ax.plot(strat_24.index, strat_24.values, label="Strategy (24mo)", linewidth=1.0, color=BRAND_PURPLE_FADE, alpha=0.5)
+    ax.plot(bench_36.index, bench_36.values, label="SPY (36mo)", linewidth=1.8, color=BRAND_INDIGO, linestyle="--")
 
     ax.axhline(0, color="black", linewidth=0.5)
-    ax.axhline(1.0, color="#999", linewidth=0.5, linestyle=":", alpha=0.5)
+    ax.axhline(1.0, color=BRAND_GRAY, linewidth=0.5, linestyle=":", alpha=0.5)
     ax.set_ylabel("Sortino Ratio")
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(True, alpha=0.3)
@@ -1134,8 +1424,8 @@ def plot_rolling_cagr(strat_returns, bench_returns):
     fig, ax = plt.subplots(figsize=(12, 4.5))
     fig.suptitle("Rolling 36-Month CAGR", fontsize=14, fontweight="bold")
 
-    ax.plot(strat_36.index, strat_36.values, label="Strategy", linewidth=2.0, color="#1a5276")
-    ax.plot(bench_36.index, bench_36.values, label="SPY", linewidth=1.8, color="#e67e22", linestyle="--")
+    ax.plot(strat_36.index, strat_36.values, label="Strategy", linewidth=2.0, color=BRAND_PURPLE)
+    ax.plot(bench_36.index, bench_36.values, label="SPY", linewidth=1.8, color=BRAND_INDIGO, linestyle="--")
 
     ax.axhline(0, color="black", linewidth=0.5)
     ax.set_ylabel("Annualized Return")
@@ -1155,10 +1445,10 @@ def plot_rolling_hit_rate(strat_returns, bench_returns):
     fig, ax = plt.subplots(figsize=(12, 4.5))
     fig.suptitle("Rolling 36-Month Hit Rate (% Positive Months)", fontsize=14, fontweight="bold")
 
-    ax.plot(strat_hr.index, strat_hr.values, label="Strategy", linewidth=2.0, color="#1a5276")
-    ax.plot(bench_hr.index, bench_hr.values, label="SPY", linewidth=1.8, color="#e67e22", linestyle="--")
+    ax.plot(strat_hr.index, strat_hr.values, label="Strategy", linewidth=2.0, color=BRAND_PURPLE)
+    ax.plot(bench_hr.index, bench_hr.values, label="SPY", linewidth=1.8, color=BRAND_INDIGO, linestyle="--")
 
-    ax.axhline(0.5, color="#c0392b", linewidth=0.8, linestyle="--", alpha=0.5, label="50% line")
+    ax.axhline(0.5, color=BRAND_GRAY, linewidth=0.8, linestyle="--", alpha=0.5, label="50% line")
     ax.set_ylabel("Win Rate")
     ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
     ax.set_ylim(0.3, 1.0)
@@ -1178,15 +1468,15 @@ def plot_underwater(strat_returns, bench_returns):
     fig.suptitle("Time Underwater", fontsize=14, fontweight="bold", y=0.97)
 
     ax1 = axes[0]
-    ax1.bar(uw_strat.index, uw_strat.values, width=25, color="#1a5276", alpha=0.7, label="Strategy")
-    ax1.bar(uw_bench.index, uw_bench.values, width=25, color="#e67e22", alpha=0.35, label="SPY")
+    ax1.bar(uw_strat.index, uw_strat.values, width=25, color=BRAND_PURPLE, alpha=0.7, label="Strategy")
+    ax1.bar(uw_bench.index, uw_bench.values, width=25, color=BRAND_INDIGO, alpha=0.35, label="SPY")
     ax1.set_ylabel("Months Since\nEquity High")
     ax1.legend(loc="upper left", fontsize=8)
     ax1.grid(True, alpha=0.3)
 
     ax2 = axes[1]
-    ax2.fill_between(dd_strat.index, dd_strat.values, 0, color="#1a5276", alpha=0.4, label="Strategy")
-    ax2.fill_between(dd_bench.index, dd_bench.values, 0, color="#e67e22", alpha=0.25, label="SPY")
+    ax2.plot(dd_strat.index, dd_strat.values, color=BRAND_PURPLE, linewidth=1.8, label="Strategy")
+    ax2.plot(dd_bench.index, dd_bench.values, color=BRAND_INDIGO, linewidth=1.4, label="SPY")
     ax2.set_ylabel("Drawdown")
     ax2.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
     ax2.legend(loc="lower left", fontsize=8)
@@ -1206,15 +1496,87 @@ def plot_rolling_excess(strat_returns, bench_returns):
     fig.suptitle("Rolling 36-Month Excess Return vs. SPY", fontsize=14, fontweight="bold")
 
     ax.fill_between(excess.index, excess.values, 0,
-                    where=(excess.values >= 0), color="#27ae60", alpha=0.4, interpolate=True)
+                    where=(excess.values >= 0), color=BRAND_TEAL, alpha=0.4, interpolate=True)
     ax.fill_between(excess.index, excess.values, 0,
-                    where=(excess.values < 0), color="#c0392b", alpha=0.4, interpolate=True)
-    ax.plot(excess.index, excess.values, color="#2c3e50", linewidth=1.2)
+                    where=(excess.values < 0), color=BRAND_RED, alpha=0.4, interpolate=True)
+    ax.plot(excess.index, excess.values, color=BRAND_TEXT, linewidth=1.2)
 
     ax.axhline(0, color="black", linewidth=0.8)
     ax.set_ylabel("Excess Annualized Return")
     ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
     ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    return fig
+
+
+def plot_leverage_timeline(trade_df, leverage_params):
+    """Plot the leverage multiplier over time from the trade log."""
+    if trade_df.empty or "leverage" not in trade_df.columns:
+        return None
+    if not leverage_params.get("enabled", False):
+        return None
+    # No chart needed for constant leverage (it's a flat line)
+    if leverage_params.get("method") == "constant":
+        return None
+
+    df = trade_df.copy()
+    df["date"] = pd.to_datetime(df["hold_month"])
+    df["lev_val"] = df["leverage"].str.replace("x", "").astype(float)
+
+    method = leverage_params.get("method", "holdings_gate")
+
+    fig, ax = plt.subplots(figsize=(12, 3.5))
+
+    if method == "holdings_gate":
+        defensives = ", ".join(leverage_params.get("defensive_tickers", ["BIL", "BTAL"]))
+        fig.suptitle(
+            f"Dynamic Leverage (Holdings Gate: {defensives})",
+            fontsize=14, fontweight="bold"
+        )
+        colors = []
+        for regime in df["lev_regime"]:
+            if regime == "leveraged":
+                colors.append(BRAND_TEAL)
+            else:
+                colors.append(BRAND_GRAY)
+    else:
+        ticker = leverage_params.get("ticker", "VT")
+        long_sma = leverage_params.get("long_sma", 200)
+        short_sma = leverage_params.get("short_sma", 50)
+        fig.suptitle(
+            f"Dynamic Leverage ({ticker} {long_sma}/{short_sma}d SMA Trend)",
+            fontsize=14, fontweight="bold"
+        )
+        colors = []
+        for regime in df["lev_regime"]:
+            if regime == "risk-on":
+                colors.append(BRAND_TEAL)
+            elif regime == "risk-off":
+                colors.append(BRAND_RED)
+            else:
+                colors.append(BRAND_GRAY)
+
+    ax.bar(df["date"], df["lev_val"], width=25, color=colors, alpha=0.7, edgecolor="none")
+    ax.axhline(1.0, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
+    ax.set_ylabel("Leverage Multiplier")
+    ax.set_ylim(0, max(df["lev_val"].max() * 1.15, 1.5))
+    ax.grid(True, alpha=0.3)
+
+    # Legend
+    from matplotlib.patches import Patch
+    if method == "holdings_gate":
+        legend_elements = [
+            Patch(facecolor=BRAND_TEAL, alpha=0.7, label="Leveraged (no defensives)"),
+            Patch(facecolor=BRAND_GRAY, alpha=0.7, label="Neutral (defensives held)"),
+        ]
+    else:
+        legend_elements = [
+            Patch(facecolor=BRAND_TEAL, alpha=0.7, label="Risk-on"),
+            Patch(facecolor=BRAND_GRAY, alpha=0.7, label="Neutral"),
+            Patch(facecolor=BRAND_RED, alpha=0.7, label="Risk-off"),
+        ]
+    ax.legend(handles=legend_elements, loc="upper left", fontsize=8)
 
     plt.tight_layout()
     return fig
@@ -1250,6 +1612,193 @@ vol_months = st.sidebar.slider(
     value=12,
     step=1,
 )
+
+# ---- DYNAMIC LEVERAGE ----
+leverage_enabled = False
+leverage_params_ui = {"enabled": False}
+with st.sidebar.expander("Leverage", expanded=False):
+    st.caption(
+        "Scale portfolio exposure using a leverage multiplier. "
+        "Choose a method below or leave off. When enabled, benchmarks "
+        "receive the same leverage for fair comparison."
+    )
+
+    leverage_method = st.selectbox(
+        "Leverage method",
+        options=["Off", "Constant", "Holdings gate", "VT trend"],
+        index=0,
+        key="leverage_method",
+        help=(
+            "Constant: fixed multiplier applied every month. "
+            "Holdings gate: leverage when no defensive assets (BIL/BTAL) are held. "
+            "VT trend: leverage based on global equity moving averages."
+        ),
+    )
+
+    leverage_enabled = leverage_method != "Off"
+
+    if leverage_method == "Constant":
+        st.caption(
+            "A fixed leverage multiplier applied to every month of the backtest. "
+            "The same multiplier is also applied to SPY and the balanced benchmarks for fair comparison."
+        )
+        mult_constant = st.number_input(
+            "Leverage multiplier",
+            min_value=0.5,
+            max_value=3.0,
+            value=1.25,
+            step=0.05,
+            key="mult_constant",
+        )
+
+        leverage_cost_annual_const = st.number_input(
+            "Annual borrowing cost (%)",
+            min_value=0.0,
+            max_value=15.0,
+            value=3.0,
+            step=0.25,
+            key="leverage_cost_const",
+            help=(
+                "Annual interest rate charged on the borrowed portion. "
+                "For example, at 1.25x leverage with a 3% cost, you pay "
+                "3% per year on the 0.25x borrowed amount (0.75% annually). "
+                "Set to 0 to ignore borrowing costs."
+            ),
+        )
+
+        leverage_params_ui = {
+            "enabled": True,
+            "method": "constant",
+            "mult_constant": mult_constant,
+            "leverage_cost_annual": leverage_cost_annual_const / 100.0,
+        }
+
+    elif leverage_method == "Holdings gate":
+        st.caption(
+            "When the strategy selects defensive assets into the final portfolio, "
+            "it's already signaling caution. This method applies leverage only when "
+            "no defensive assets are held."
+        )
+        defensive_tickers_input = st.text_input(
+            "Defensive tickers (comma-separated)",
+            value="BIL, BTAL",
+            key="defensive_tickers",
+            help="If ANY of these appear in the final holdings, leverage = 1.0x.",
+        )
+        defensive_tickers_list = [
+            t.strip().upper() for t in defensive_tickers_input.split(",") if t.strip()
+        ]
+
+        mult_leveraged = st.number_input(
+            "Leverage multiplier (when no defensives held)",
+            min_value=1.0,
+            max_value=2.0,
+            value=1.25,
+            step=0.05,
+            key="mult_leveraged",
+        )
+
+        leverage_cost_annual = st.number_input(
+            "Annual borrowing cost (%)",
+            min_value=0.0,
+            max_value=15.0,
+            value=3.0,
+            step=0.25,
+            key="leverage_cost",
+            help=(
+                "Annual interest rate charged on the borrowed portion. "
+                "For example, at 1.25x leverage with a 3% cost, you pay "
+                "3% per year on the 0.25x borrowed amount (0.75% annually). "
+                "Set to 0 to ignore borrowing costs."
+            ),
+        )
+
+        leverage_params_ui = {
+            "enabled": True,
+            "method": "holdings_gate",
+            "defensive_tickers": defensive_tickers_list,
+            "mult_leveraged": mult_leveraged,
+            "leverage_cost_annual": leverage_cost_annual / 100.0,
+        }
+
+    elif leverage_method == "VT trend":
+        st.caption(
+            "Uses a global equity ETF's moving averages to gauge trend. "
+            "Risk-on when price is above the long SMA and the short SMA is rising."
+        )
+        leverage_ticker = st.text_input(
+            "Trend ticker",
+            value="VT",
+            key="leverage_ticker",
+            help="Global equity ETF to measure trend. VT (Vanguard Total World Stock) is default.",
+        ).strip().upper()
+
+        lev_col1, lev_col2 = st.columns(2)
+        with lev_col1:
+            leverage_long_sma = st.number_input(
+                "Long SMA (days)",
+                min_value=50,
+                max_value=400,
+                value=200,
+                step=10,
+                key="leverage_long_sma",
+                help="Price must be above this SMA for a bullish trend reading."
+            )
+        with lev_col2:
+            leverage_short_sma = st.number_input(
+                "Short SMA (days)",
+                min_value=10,
+                max_value=200,
+                value=50,
+                step=5,
+                key="leverage_short_sma",
+                help="This SMA must be rising for a confirmed uptrend."
+            )
+
+        leverage_slope_lookback = st.number_input(
+            "Slope lookback (days)",
+            min_value=5,
+            max_value=60,
+            value=20,
+            step=5,
+            key="leverage_slope_lookback",
+            help="Compare the short SMA now vs. this many trading days ago to determine if it's rising."
+        )
+
+        st.markdown("**Multipliers by regime:**")
+        lev_m1, lev_m2 = st.columns(2)
+        with lev_m1:
+            mult_risk_on = st.number_input(
+                "Risk-on",
+                min_value=1.0,
+                max_value=2.0,
+                value=1.25,
+                step=0.05,
+                key="mult_risk_on",
+                help="Price > long SMA AND short SMA rising."
+            )
+        with lev_m2:
+            mult_risk_off = st.number_input(
+                "Risk-off",
+                min_value=0.1,
+                max_value=1.0,
+                value=0.75,
+                step=0.05,
+                key="mult_risk_off",
+                help="Price < long SMA."
+            )
+
+        leverage_params_ui = {
+            "enabled": True,
+            "method": "vt_trend",
+            "ticker": leverage_ticker,
+            "long_sma": int(leverage_long_sma),
+            "short_sma": int(leverage_short_sma),
+            "slope_lookback": int(leverage_slope_lookback),
+            "mult_risk_on": mult_risk_on,
+            "mult_neutral": 1.0,
+            "mult_risk_off": mult_risk_off,
+        }
 
 # ---- RUN BACKTEST (second position) ----
 st.sidebar.markdown("---")
@@ -1424,31 +1973,8 @@ else:
 
 
 # =============================================================================
-# MAIN AREA (WITH PASSWORD PROTECTION)
+# MAIN AREA
 # =============================================================================
-
-# 1. Define your password here
-PASSWORD = "AdaptiveMatt$"
-
-# 2. Create a session state to track if the user is logged in
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
-
-# 3. If not logged in, show the login screen
-if not st.session_state["authenticated"]:
-    st.title("🔐 Portfolio Dashboard Access")
-    user_input = st.text_input("Enter Password to View Strategy", type="password")
-    
-    if st.button("Login"):
-        if user_input == PASSWORD:
-            st.session_state["authenticated"] = True
-            st.rerun()
-        else:
-            st.error("Incorrect password. Please try again.")
-    st.stop() # This prevents the rest of the app from loading
-
-# --- EVERYTHING BELOW THIS LINE ONLY RUNS AFTER LOGIN ---
-
 
 st.title("Adaptive Portfolio Strategy Dashboard")
 
@@ -1460,7 +1986,13 @@ if run_button:
         st.error("You need at least some assets in the basket. Select fixed assets or enable equity sub-selection.")
     else:
         # Gather ALL tickers needed (including backfills)
-        all_tickers_needed = list(selected_fixed) + list(selected_equity) + [BENCHMARK_TICKER, "BIL", "VBIAX"]
+        all_tickers_needed = (
+            list(selected_fixed) + list(selected_equity)
+            + [BENCHMARK_TICKER, "BIL"]
+            + [c["ticker"] for c in BAL_BENCHMARKS]
+        )
+        if leverage_enabled and leverage_params_ui.get("method") == "vt_trend" and leverage_params_ui.get("ticker"):
+            all_tickers_needed.append(leverage_params_ui["ticker"])
         for bf_chain in backfill_rules.values():
             all_tickers_needed.extend(bf_chain)
         # Pass as tuple for cache hashability
@@ -1567,6 +2099,7 @@ if run_button:
                     "backtest_start": backtest_start,
                     "backtest_end": backtest_end,
                     "backfill_summary": backfill_summary,
+                    "leverage_params": leverage_params_ui,
                 }
 
                 with st.spinner("Running backtest..."):
@@ -1580,12 +2113,32 @@ if run_button:
                     bench_returns = bench_monthly.loc[common_dates]
                     strat_returns = results_df["portfolio_return"].loc[common_dates]
 
-                    # 60/40 benchmark (VBIAX)
-                    balanced_returns = None
-                    balanced_metrics = {}
-                    if "VBIAX" in monthly_prices.columns:
-                        balanced_monthly = monthly_prices["VBIAX"].pct_change()
-                        balanced_returns = balanced_monthly.reindex(common_dates)
+                    # Extract leverage multipliers and borrowing costs
+                    leverage_mults = results_df["leverage_mult"].loc[common_dates]
+                    borrow_costs = results_df["borrow_cost"].loc[common_dates]
+
+                    # Apply dynamic leverage + borrowing costs to benchmarks
+                    if leverage_enabled:
+                        bench_returns = bench_returns * leverage_mults - borrow_costs
+
+                    # Balanced benchmark returns — one entry per BAL_BENCHMARKS config.
+                    # Each entry carries label, ticker, color, linestyle, and the
+                    # leverage-adjusted monthly return series. Metrics and daily
+                    # equity get added below once those are computed.
+                    balanced_data = []
+                    for cfg in BAL_BENCHMARKS:
+                        if cfg["ticker"] not in monthly_prices.columns:
+                            continue
+                        bal_monthly = monthly_prices[cfg["ticker"]].pct_change()
+                        bal_returns = bal_monthly.reindex(common_dates)
+                        if leverage_enabled and bal_returns is not None:
+                            bal_returns = bal_returns * leverage_mults - borrow_costs
+                        balanced_data.append({
+                            **cfg,
+                            "returns": bal_returns,
+                            "daily_equity": pd.Series(dtype=float),
+                            "metrics": {},
+                        })
 
                     # Risk-free rate from BIL for Sharpe/Sortino calculation
                     rf_monthly = None
@@ -1593,29 +2146,81 @@ if run_button:
                         rf_monthly = monthly_prices["BIL"].pct_change().loc[common_dates]
 
                     # Build daily equity curves for benchmarks (for daily drawdown)
+                    # When leverage is enabled, apply the same monthly multipliers
+                    # and borrowing costs to daily benchmark returns.
                     spy_daily_equity = pd.Series(dtype=float)
-                    balanced_daily_equity = pd.Series(dtype=float)
                     if len(daily_equity) > 0:
                         de_start, de_end = daily_equity.index[0], daily_equity.index[-1]
+
+                        # Build daily leverage and cost maps from the trade log
+                        daily_lev_map = None
+                        daily_cost_map = None
+                        if leverage_enabled and not trade_df.empty:
+                            daily_idx = daily_prices.loc[de_start:de_end].index
+                            daily_lev_map = pd.Series(1.0, index=daily_idx)
+                            daily_cost_map = pd.Series(0.0, index=daily_idx)
+                            for _, trow in trade_df.iterrows():
+                                entry_str = trow.get("exec_entry", "")
+                                exit_str = trow.get("exec_exit", "")
+                                if not entry_str or not exit_str:
+                                    continue
+                                t_entry = pd.Timestamp(entry_str)
+                                t_exit = pd.Timestamp(exit_str)
+                                t_lev = float(trow["leverage"].replace("x", ""))
+                                mask = (
+                                    (daily_lev_map.index >= t_entry)
+                                    & (daily_lev_map.index <= t_exit)
+                                )
+                                daily_lev_map[mask] = t_lev
+                                # Spread monthly borrowing cost across trading days
+                                n_days = mask.sum()
+                                if t_lev > 1.0 and n_days > 0:
+                                    lev_cost_ann = leverage_params_ui.get("leverage_cost_annual", 0.0)
+                                    monthly_cost = (t_lev - 1.0) * (lev_cost_ann / 12.0)
+                                    daily_cost_map[mask] = monthly_cost / n_days
+
                         if BENCHMARK_TICKER in daily_prices.columns:
                             spy_daily = daily_prices[BENCHMARK_TICKER].loc[de_start:de_end].dropna()
                             if len(spy_daily) > 0:
-                                spy_daily_equity = INITIAL_CAPITAL * (spy_daily / spy_daily.iloc[0])
-                        if "VBIAX" in daily_prices.columns:
-                            bal_daily = daily_prices["VBIAX"].loc[de_start:de_end].dropna()
-                            if len(bal_daily) > 0:
-                                balanced_daily_equity = INITIAL_CAPITAL * (bal_daily / bal_daily.iloc[0])
+                                if daily_lev_map is not None:
+                                    spy_ret = spy_daily.pct_change().fillna(0)
+                                    spy_lev = daily_lev_map.reindex(spy_daily.index).fillna(1.0)
+                                    spy_cost = daily_cost_map.reindex(spy_daily.index).fillna(0.0)
+                                    spy_ret_lev = spy_ret * spy_lev - spy_cost
+                                    spy_daily_equity = INITIAL_CAPITAL * (1 + spy_ret_lev).cumprod()
+                                else:
+                                    spy_daily_equity = INITIAL_CAPITAL * (spy_daily / spy_daily.iloc[0])
+
+                        for entry in balanced_data:
+                            t = entry["ticker"]
+                            if t not in daily_prices.columns:
+                                continue
+                            bal_daily = daily_prices[t].loc[de_start:de_end].dropna()
+                            if len(bal_daily) == 0:
+                                continue
+                            if daily_lev_map is not None:
+                                bal_ret = bal_daily.pct_change().fillna(0)
+                                bal_lev = daily_lev_map.reindex(bal_daily.index).fillna(1.0)
+                                bal_cost = daily_cost_map.reindex(bal_daily.index).fillna(0.0)
+                                bal_ret_lev = bal_ret * bal_lev - bal_cost
+                                entry["daily_equity"] = INITIAL_CAPITAL * (1 + bal_ret_lev).cumprod()
+                            else:
+                                entry["daily_equity"] = INITIAL_CAPITAL * (bal_daily / bal_daily.iloc[0])
 
                     strat_metrics = compute_metrics(strat_returns, rf_monthly=rf_monthly, daily_equity=daily_equity)
                     bench_metrics = compute_metrics(bench_returns, rf_monthly=rf_monthly, daily_equity=spy_daily_equity)
-                    if balanced_returns is not None:
-                        balanced_metrics = compute_metrics(balanced_returns.dropna(), rf_monthly=rf_monthly, daily_equity=balanced_daily_equity)
+                    for entry in balanced_data:
+                        entry["metrics"] = compute_metrics(
+                            entry["returns"].dropna(),
+                            rf_monthly=rf_monthly,
+                            daily_equity=entry["daily_equity"],
+                        )
 
-                    # try:
-                    #   append_to_excel(params, strat_metrics, bench_metrics, RESULTS_FILE)
-                    #   st.success(f"Results appended to **{os.path.basename(RESULTS_FILE)}**")
-                    # except Exception as e:
-                    #   st.warning(f"Could not write to Excel (file may be open): {e}")
+                    try:
+                        append_to_excel(params, strat_metrics, bench_metrics, RESULTS_FILE)
+                        st.success(f"Results appended to **{os.path.basename(RESULTS_FILE)}**")
+                    except Exception as e:
+                        st.warning(f"Could not write to Excel (file may be open): {e}")
 
                     # ---- METRICS TABLE (moved to top of results) ----
                     st.subheader("Performance Summary")
@@ -1641,23 +2246,42 @@ if run_button:
                             return "N/A"
                         return v
 
+                    # Build columns: Strategy, SPY, then one per balanced benchmark
+                    metric_cols = [
+                        ("Strategy", strat_metrics),
+                        ("SPY", bench_metrics),
+                    ]
+                    for entry in balanced_data:
+                        metric_cols.append((entry["label"], entry["metrics"]))
+
+                    def metric_row(name, key, fmt, bold):
+                        vals = [fmt(m.get(key, 0)) for _, m in metric_cols]
+                        return (name, vals, bold)
+
                     # Ordered with key metrics first; Sharpe and Total Months removed
+                    growth_key = f"Growth of ${INITIAL_CAPITAL:,}"
                     metrics_rows = [
-                        ("Sortino Ratio", fmt_ratio(strat_metrics.get("Sortino Ratio", 0)), fmt_ratio(bench_metrics.get("Sortino Ratio", 0)), fmt_ratio(balanced_metrics.get("Sortino Ratio", 0)), True),
-                        ("CAGR", fmt_pct(strat_metrics.get("CAGR", 0)), fmt_pct(bench_metrics.get("CAGR", 0)), fmt_pct(balanced_metrics.get("CAGR", 0)), True),
-                        ("Max Drawdown", fmt_pct(strat_metrics.get("Max Drawdown", 0)), fmt_pct(bench_metrics.get("Max Drawdown", 0)), fmt_pct(balanced_metrics.get("Max Drawdown", 0)), True),
-                        ("Max DD (Daily)", fmt_pct(strat_metrics.get("Max Drawdown (Daily)", 0)), fmt_pct(bench_metrics.get("Max Drawdown (Daily)", 0)), fmt_pct(balanced_metrics.get("Max Drawdown (Daily)", 0)), True),
-                        ("Calmar Ratio", fmt_ratio(strat_metrics.get("Calmar Ratio", 0)), fmt_ratio(bench_metrics.get("Calmar Ratio", 0)), fmt_ratio(balanced_metrics.get("Calmar Ratio", 0)), False),
-                        ("Annualized Vol", fmt_pct(strat_metrics.get("Annualized Vol", 0)), fmt_pct(bench_metrics.get("Annualized Vol", 0)), fmt_pct(balanced_metrics.get("Annualized Vol", 0)), False),
-                        ("Best Year", fmt_pct(strat_metrics.get("Best Year", 0)), fmt_pct(bench_metrics.get("Best Year", 0)), fmt_pct(balanced_metrics.get("Best Year", 0)), False),
-                        ("Worst Year", fmt_pct(strat_metrics.get("Worst Year", 0)), fmt_pct(bench_metrics.get("Worst Year", 0)), fmt_pct(balanced_metrics.get("Worst Year", 0)), False),
-                        ("Win Rate", fmt_pct(strat_metrics.get("Win Rate (monthly)", 0)), fmt_pct(bench_metrics.get("Win Rate (monthly)", 0)), fmt_pct(balanced_metrics.get("Win Rate (monthly)", 0)), False),
-                        ("Total Return", fmt_pct(strat_metrics.get("Total Return", 0)), fmt_pct(bench_metrics.get("Total Return", 0)), fmt_pct(balanced_metrics.get("Total Return", 0)), False),
-                        (f"Growth of ${INITIAL_CAPITAL:,}", fmt_dollar(strat_metrics.get(f"Growth of ${INITIAL_CAPITAL:,}", 0)), fmt_dollar(bench_metrics.get(f"Growth of ${INITIAL_CAPITAL:,}", 0)), fmt_dollar(balanced_metrics.get(f"Growth of ${INITIAL_CAPITAL:,}", 0)), False),
-                        ("Period", strat_metrics.get("Period", ""), bench_metrics.get("Period", ""), balanced_metrics.get("Period", ""), False),
+                        metric_row("Sortino Ratio",     "Sortino Ratio",       fmt_ratio,  True),
+                        metric_row("CAGR",              "CAGR",                fmt_pct,    True),
+                        metric_row("Max Drawdown",      "Max Drawdown",        fmt_pct,    True),
+                        metric_row("Max DD (Daily)",    "Max Drawdown (Daily)",fmt_pct,    True),
+                        metric_row("Worst Single Day",  "Worst Day",           fmt_pct,    False),
+                        metric_row("Calmar Ratio",      "Calmar Ratio",        fmt_ratio,  False),
+                        metric_row("Annualized Vol",    "Annualized Vol",      fmt_pct,    False),
+                        metric_row("Best Year",         "Best Year",           fmt_pct,    False),
+                        metric_row("Worst Year",        "Worst Year",          fmt_pct,    False),
+                        metric_row("Win Rate",          "Win Rate (monthly)",  fmt_pct,    False),
+                        metric_row("Total Return",      "Total Return",        fmt_pct,    False),
+                        metric_row(growth_key,          growth_key,            fmt_dollar, False),
+                        ("Period", [m.get("Period", "") for _, m in metric_cols], False),
                     ]
 
-                    # Build HTML table with bold top 3 rows and 60/40 column
+                    # Build HTML table with bold top 3 rows; columns dynamic
+                    lev_tag = " (lev)" if leverage_enabled else ""
+                    header_cells = "".join(
+                        f"<th>{label}{lev_tag if label != 'Strategy' else ''}</th>"
+                        for label, _ in metric_cols
+                    )
                     html_parts = [
                         '<style>',
                         '.metrics-table { width: 100%; border-collapse: collapse; font-family: sans-serif; font-size: 14px; }',
@@ -1667,12 +2291,13 @@ if run_button:
                         '.bold-row td { font-weight: 700; }',
                         '</style>',
                         '<table class="metrics-table">',
-                        '<thead><tr><th>Metric</th><th>Strategy</th><th>SPY</th><th>60/40 (VBIAX)</th></tr></thead>',
+                        f'<thead><tr><th>Metric</th>{header_cells}</tr></thead>',
                         '<tbody>',
                     ]
-                    for metric, strat_val, bench_val, bal_val, is_bold in metrics_rows:
+                    for metric, vals, is_bold in metrics_rows:
                         row_class = ' class="bold-row"' if is_bold else ""
-                        html_parts.append(f'<tr{row_class}><td>{metric}</td><td>{strat_val}</td><td>{bench_val}</td><td>{bal_val}</td></tr>')
+                        cells = "".join(f"<td>{v}</td>" for v in vals)
+                        html_parts.append(f'<tr{row_class}><td>{metric}</td>{cells}</tr>')
                     html_parts.append('</tbody></table>')
                     html = "\n".join(html_parts)
 
@@ -1686,26 +2311,94 @@ if run_button:
                             f"Worst daily drawdown: peak on {peak_dt.strftime('%Y-%m-%d')}, "
                             f"trough on {trough_dt.strftime('%Y-%m-%d')}"
                         )
+                    worst_day_dt = strat_metrics.get("Worst Day Date")
+                    if worst_day_dt is not None:
+                        st.caption(
+                            f"Worst single-day decline: {strat_metrics.get('Worst Day', 0):.2%} "
+                            f"on {worst_day_dt.strftime('%Y-%m-%d')}"
+                        )
 
                     # ---- CURRENT SIGNALS ----
                     signals = compute_current_signals(daily_prices, monthly_prices, params)
                     if signals is not None:
                         st.subheader("Current Model Signals")
                         sig_date = signals["signal_date"]
-                        st.caption(f"As of {sig_date.strftime('%m/%d/%Y')} (most recent month-end close)")
+                        st.caption(
+                            f"As of {sig_date.strftime('%m/%d/%Y')} close · "
+                            "this is what the model would recommend if you "
+                            "rebalanced today."
+                        )
 
-                        # Holdings summary
+                        # Holdings summary (live signal)
                         holdings_parts = []
                         for t in signals["final_holdings"]:
                             w = signals["weights"].get(t, 0)
                             holdings_parts.append(f"{w:.2%} {t}")
-                        st.markdown("**Current holdings:** " + " | ".join(holdings_parts))
+                        st.markdown("**Recommended holdings:** " + " | ".join(holdings_parts))
 
                         if signals["selected_equities"]:
                             st.markdown(
-                                "**Equity picks this month:** "
+                                "**Equity picks:** "
                                 + ", ".join(signals["selected_equities"])
                             )
+
+                        # Previous month-end reference line
+                        prev_date = signals.get("prev_month_end_date")
+                        prev_holdings = signals.get("prev_holdings", [])
+                        prev_weights = signals.get("prev_weights", {})
+                        if prev_date is not None and prev_holdings:
+                            prev_parts = []
+                            for t in prev_holdings:
+                                w = prev_weights.get(t, 0)
+                                prev_parts.append(f"{w:.2%} {t}")
+                            st.caption(
+                                f"Previous month-end signal "
+                                f"({prev_date.strftime('%m/%d/%Y')}): "
+                                + " | ".join(prev_parts)
+                            )
+
+                        # Current leverage signal
+                        if leverage_params_ui.get("enabled", False):
+                            method = leverage_params_ui.get("method", "holdings_gate")
+                            if method == "constant":
+                                mult_c = leverage_params_ui.get("mult_constant", 1.25)
+                                st.markdown(f"**Leverage:** {mult_c:.2f}x (constant)")
+                            elif method == "holdings_gate":
+                                # For holdings gate, use the current signal's final holdings
+                                lev_m, lev_r, lev_d = compute_leverage_signal(
+                                    daily_prices, sig_date, leverage_params_ui,
+                                    final_holdings=signals["final_holdings"]
+                                )
+                                regime_colors = {
+                                    "leveraged": "🟢", "defensive": "🟡",
+                                    "off": "⚪", "no holdings": "⚪",
+                                }
+                                emoji = regime_colors.get(lev_r, "⚪")
+                                lev_line = f"**Leverage:** {emoji} {lev_r} ({lev_m:.2f}x)"
+                                if lev_d.get("defensives_held"):
+                                    lev_line += f"  (holding {', '.join(lev_d['defensives_held'])})"
+                                st.markdown(lev_line)
+                            else:
+                                lev_m, lev_r, lev_d = compute_leverage_signal(
+                                    daily_prices, sig_date, leverage_params_ui,
+                                    final_holdings=signals["final_holdings"]
+                                )
+                                lev_ticker = leverage_params_ui["ticker"]
+                                regime_colors = {
+                                    "risk-on": "🟢", "neutral": "🟡", "risk-off": "🔴",
+                                    "off": "⚪", "no data": "⚪", "insufficient history": "⚪",
+                                }
+                                emoji = regime_colors.get(lev_r, "⚪")
+                                lev_parts = [f"**Leverage:** {emoji} {lev_r} ({lev_m:.2f}x)"]
+                                if lev_d:
+                                    lev_parts.append(
+                                        f"  {lev_ticker}: ${lev_d['price']:.2f} | "
+                                        f"{leverage_params_ui['long_sma']}d SMA: ${lev_d['long_sma']:.2f} "
+                                        f"({'above' if lev_d['price_above_long'] else 'below'}) | "
+                                        f"{leverage_params_ui['short_sma']}d SMA: "
+                                        f"{'rising' if lev_d['short_sma_rising'] else 'falling'}"
+                                    )
+                                st.markdown("  \n".join(lev_parts))
 
                         # Details table
                         details = signals["asset_details"]
@@ -1721,7 +2414,7 @@ if run_button:
                             '.sig-table th { text-align: left; padding: 6px 10px; border-bottom: 2px solid #ddd; background-color: #f8f9fa; }',
                             '.sig-table td { padding: 6px 10px; border-bottom: 1px solid #eee; }',
                             '.sig-table tr:hover { background-color: #f5f5f5; }',
-                            '.sig-selected { background-color: #eaf4e8; }',
+                            '.sig-selected { background-color: #F0EDF8; }',
                             '.sig-equity { font-style: italic; }',
                             '</style>',
                             '<table class="sig-table">',
@@ -1795,7 +2488,7 @@ if run_button:
 
                     # ---- CHARTS ----
                     st.subheader("Equity Curve and Drawdown")
-                    fig = plot_equity_and_drawdown(strat_returns, bench_returns, balanced_returns)
+                    fig = plot_equity_and_drawdown(strat_returns, bench_returns, balanced_data)
                     st.pyplot(fig)
                     plt.close(fig)
 
@@ -1804,7 +2497,7 @@ if run_button:
                         fig_dd = plot_daily_drawdown(
                             daily_equity,
                             daily_equity_bench=spy_daily_equity if len(spy_daily_equity) > 0 else None,
-                            daily_equity_balanced=balanced_daily_equity if len(balanced_daily_equity) > 0 else None,
+                            balanced_data=balanced_data,
                         )
                         if fig_dd is not None:
                             st.pyplot(fig_dd)
@@ -1842,6 +2535,13 @@ if run_button:
                     fig_re = plot_rolling_excess(strat_returns, bench_returns)
                     st.pyplot(fig_re)
                     plt.close(fig_re)
+
+                    # Leverage timeline (only shown when leverage is enabled)
+                    if leverage_params_ui.get("enabled", False):
+                        fig_lev = plot_leverage_timeline(trade_df, leverage_params_ui)
+                        if fig_lev is not None:
+                            st.pyplot(fig_lev)
+                            plt.close(fig_lev)
 
                     # ---- TRADE LOG ----
                     st.subheader("Trade Log")
@@ -1888,6 +2588,27 @@ if run_button:
                         st.markdown(f"**Equity selection:** {eq_display}")
                     with col_cfg3:
                         st.markdown(f"**Final:** Top {final_top_n} by {main_lookback_label}, risk parity ({vol_months}mo vol)")
+                        if leverage_params_ui.get("enabled", False):
+                            lp = leverage_params_ui
+                            if lp.get("method") == "constant":
+                                cost_pct = lp.get("leverage_cost_annual", 0.0) * 100
+                                cost_str = f", cost {cost_pct:.1f}%" if cost_pct > 0 else ""
+                                st.markdown(
+                                    f"**Leverage:** Constant {lp.get('mult_constant', 1.25):.2f}x{cost_str}"
+                                )
+                            elif lp.get("method") == "holdings_gate":
+                                defensives = ", ".join(lp.get("defensive_tickers", []))
+                                cost_pct = lp.get("leverage_cost_annual", 0.0) * 100
+                                cost_str = f", cost {cost_pct:.1f}%" if cost_pct > 0 else ""
+                                st.markdown(
+                                    f"**Leverage:** Holdings gate ({defensives}), "
+                                    f"{lp.get('mult_leveraged', 1.25):.2f}x when clear{cost_str}"
+                                )
+                            elif lp.get("method") == "vt_trend":
+                                st.markdown(
+                                    f"**Leverage:** {lp['ticker']} {lp['long_sma']}/{lp['short_sma']}d SMA, "
+                                    f"on={lp['mult_risk_on']:.2f}x / off={lp['mult_risk_off']:.2f}x"
+                                )
 
                     # ---- BACKFILL DETAILS & DATA NOTES (at end of dashboard) ----
                     if backfill_info:
@@ -1895,10 +2616,36 @@ if run_button:
                         with st.expander("Backfill details (which ticker covers which dates)"):
                             st.dataframe(pd.DataFrame(backfill_info), use_container_width=True, hide_index=True)
 
+                    lev_note = ""
+                    if leverage_params_ui.get("enabled", False):
+                        lp = leverage_params_ui
+                        if lp.get("method") == "constant":
+                            cost_pct = lp.get("leverage_cost_annual", 0.0) * 100
+                            cost_str = f" Borrowing cost: {cost_pct:.1f}% annual on leveraged portion." if cost_pct > 0 else ""
+                            lev_note = (
+                                f" Constant {lp.get('mult_constant', 1.25):.2f}x leverage applied "
+                                f"to strategy and benchmarks.{cost_str}"
+                            )
+                        elif lp.get("method") == "holdings_gate":
+                            defensives = ", ".join(lp.get("defensive_tickers", []))
+                            cost_pct = lp.get("leverage_cost_annual", 0.0) * 100
+                            cost_str = f" Borrowing cost: {cost_pct:.1f}% annual on leveraged portion." if cost_pct > 0 else ""
+                            lev_note = (
+                                f" Dynamic leverage: {lp.get('mult_leveraged', 1.25):.2f}x when no "
+                                f"defensive assets ({defensives}) are in the final portfolio, "
+                                f"1.0x otherwise.{cost_str}"
+                            )
+                        elif lp.get("method") == "vt_trend":
+                            lev_note = (
+                                " Dynamic leverage scales monthly returns by a multiplier "
+                                f"({lp['mult_risk_off']:.2f}x to {lp['mult_risk_on']:.2f}x) "
+                                f"based on {lp['ticker']} trend regime."
+                            )
                     st.caption(
                         "All prices are dividend- and split-adjusted (total return). "
                         "Signals computed at month-end close; trades execute at next trading day's close (1-day lag). "
                         "Sortino ratio uses BIL as the risk-free rate."
+                        + lev_note
                     )
 
 else:
