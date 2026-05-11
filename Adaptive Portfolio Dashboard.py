@@ -78,6 +78,7 @@ EQUITY_LOOKBACK_OPTIONS = {
 }
 
 MAIN_LOOKBACK_OPTIONS = {
+    "6-month only":               ([6],       [1.0]),
     "6/8-month blend (50/50)":    ([6, 8],    [0.50, 0.50]),
     "1/8-month blend (50/50)":    ([1, 8],    [0.50, 0.50]),
     "2/8-month blend (50/50)":    ([2, 8],    [0.50, 0.50]),
@@ -1358,6 +1359,49 @@ def compute_rolling_sortino(returns, window, rf_returns=None):
     return rolling_sortino
 
 
+def compute_rolling_calmar(monthly_returns, daily_equity, window_months):
+    """
+    Compute rolling Calmar ratio (CAGR / |max drawdown|) over a trailing window.
+
+    Uses the daily equity curve for max drawdown when available, which matches
+    the dashboard's headline 'Max DD (Daily)' metric. Falls back to monthly
+    drawdown if no daily equity is provided. Returns NaN before the window
+    is filled and during periods with no observed drawdown.
+    """
+    rolling = pd.Series(dtype=float, index=monthly_returns.index)
+    use_daily = daily_equity is not None and len(daily_equity) > 0
+
+    for i in range(window_months, len(monthly_returns) + 1):
+        chunk = monthly_returns.iloc[i - window_months:i]
+
+        # CAGR over the window
+        total_ret = (1 + chunk).prod() - 1.0
+        n_years = len(chunk) / 12.0
+        cagr = (1 + total_ret) ** (1.0 / n_years) - 1.0 if n_years > 0 else 0.0
+
+        # Max drawdown over the same window (daily preferred, monthly fallback)
+        max_dd = 0.0
+        if use_daily:
+            window_daily = daily_equity.loc[chunk.index[0]:chunk.index[-1]]
+            if len(window_daily) > 1:
+                peak = window_daily.cummax()
+                dd_series = (window_daily - peak) / peak
+                max_dd = abs(dd_series.min())
+
+        if max_dd == 0.0:
+            wealth = (1 + chunk).cumprod()
+            peak = wealth.cummax()
+            dd_series = (wealth - peak) / peak
+            max_dd = abs(dd_series.min())
+
+        if max_dd > 0:
+            rolling.iloc[i - 1] = cagr / max_dd
+        else:
+            rolling.iloc[i - 1] = np.nan
+
+    return rolling
+
+
 def compute_rolling_cagr(returns, window):
     """Compute rolling annualized return over a trailing window."""
     rolling = pd.Series(dtype=float, index=returns.index)
@@ -1409,6 +1453,62 @@ def plot_rolling_sortino(strat_returns, bench_returns, rf_monthly=None):
     ax.axhline(0, color="black", linewidth=0.5)
     ax.axhline(1.0, color=BRAND_GRAY, linewidth=0.5, linestyle=":", alpha=0.5)
     ax.set_ylabel("Sortino Ratio")
+    ax.legend(loc="upper left", fontsize=8)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    return fig
+
+
+def plot_rolling_calmar(strat_returns, bench_returns,
+                        daily_equity_strat=None, daily_equity_bench=None):
+    """
+    Plot rolling Calmar ratio (CAGR / |max drawdown|).
+
+    Primary line: 60-month window (Calmar is fundamentally about tail events,
+    and a 36-month window often hasn't seen a real drawdown yet).
+    Faded line: 36-month window for shorter-term trend.
+    SPY shown at 60-month for comparison.
+
+    Y-axis is capped at 0 to 5 for visual clarity. Values exceeding the cap
+    are annotated above the chart edge so calm periods don't blow out the scale.
+    """
+    strat_60 = compute_rolling_calmar(strat_returns, daily_equity_strat, 60)
+    strat_36 = compute_rolling_calmar(strat_returns, daily_equity_strat, 36)
+    bench_60 = compute_rolling_calmar(bench_returns, daily_equity_bench, 60)
+
+    fig, ax = plt.subplots(figsize=(12, 4.5))
+    fig.suptitle("Rolling Calmar Ratio (CAGR / Max Drawdown)",
+                 fontsize=14, fontweight="bold")
+
+    ax.plot(strat_60.index, strat_60.values, label="Strategy (60mo)",
+            linewidth=2.0, color="#1a5276")
+    ax.plot(strat_36.index, strat_36.values, label="Strategy (36mo)",
+            linewidth=1.0, color="#5dade2", alpha=0.5)
+    ax.plot(bench_60.index, bench_60.values, label="SPY (60mo)",
+            linewidth=1.8, color="#e67e22", linestyle="--")
+
+    ax.axhline(0, color="black", linewidth=0.5)
+    ax.axhline(1.0, color="#999", linewidth=0.5, linestyle=":", alpha=0.5)
+
+    # Cap y-axis. Annotate any windows that exceed the cap.
+    y_min, y_max = 0, 5
+    ax.set_ylim(y_min, y_max)
+
+    for series, color in [
+        (strat_60, "#1a5276"),
+        (strat_36, "#5dade2"),
+        (bench_60, "#e67e22"),
+    ]:
+        spikes = series[series > y_max].dropna()
+        for date, val in spikes.items():
+            ax.annotate(
+                f"{val:.1f}", xy=(date, y_max), xytext=(0, 3),
+                textcoords="offset points", ha="center",
+                fontsize=7, color=color, alpha=0.85,
+            )
+
+    ax.set_ylabel("Calmar Ratio")
     ax.legend(loc="upper left", fontsize=8)
     ax.grid(True, alpha=0.3)
 
@@ -1594,7 +1694,7 @@ st.sidebar.header("Main Strategy")
 main_lookback_label = st.sidebar.selectbox(
     "Main momentum lookback (for final ranking)",
     options=list(MAIN_LOOKBACK_OPTIONS.keys()),
-    index=2,
+    index=3,
 )
 main_lookbacks, main_lookback_weights = MAIN_LOOKBACK_OPTIONS[main_lookback_label]
 
@@ -1810,7 +1910,7 @@ st.sidebar.header("Backtest Period")
 
 backtest_start = st.sidebar.text_input(
     "Backtest start (YYYY-MM)",
-    value="2002-01",
+    value="1995-06",
     help="Results will be filtered to start from this month."
 )
 
@@ -1896,7 +1996,7 @@ st.sidebar.markdown("---")
 
 # Pre-filled defaults based on Portfolio Visualizer backfill mappings
 BACKFILL_DEFAULTS = [
-    ("HGER",    "QCI"),
+    ("HGER",    "QCI, QCI_SYNTH"),
     ("BTAL",    "BAB"),
     ("BIL",     "VFISX"),
     ("TLT",     "VUSTX"),
@@ -2519,6 +2619,15 @@ if run_button:
                     fig_rs = plot_rolling_sortino(strat_returns, bench_returns, rf_monthly)
                     st.pyplot(fig_rs)
                     plt.close(fig_rs)
+
+                    fig_rcal = plot_rolling_calmar(
+                        strat_returns,
+                        bench_returns,
+                        daily_equity_strat=daily_equity if len(daily_equity) > 0 else None,
+                        daily_equity_bench=spy_daily_equity if len(spy_daily_equity) > 0 else None,
+                    )
+                    st.pyplot(fig_rcal)
+                    plt.close(fig_rcal)
 
                     fig_rc = plot_rolling_cagr(strat_returns, bench_returns)
                     st.pyplot(fig_rc)
