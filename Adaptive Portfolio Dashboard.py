@@ -48,6 +48,127 @@ st.set_page_config(
 )
 
 # =============================================================================
+# GLOBAL STYLING (Asymmetric Edge design language, ported from app.py)
+# =============================================================================
+# Page chrome, typography, dividers, and tables are styled to match the public
+# Asymmetric Edge dashboard: DM Sans throughout, a white canvas, charcoal text,
+# light gridlines, and a brand-purple accent. The matplotlib rcParams below
+# carry the same look into every chart (white background, light grid, muted
+# tick labels, no top/right spines) so the backtest charts read like the
+# newsletter charts. Adjust the tokens here to restyle the whole app at once.
+
+# ---- Shared design tokens ----
+AE_TEXT_PRIMARY = "#484848"     # Charcoal, headings and emphasis
+AE_TEXT_SECONDARY = "#666677"   # Axis labels, body
+AE_TEXT_MUTED = "#777788"       # Tick labels, captions
+AE_GRID = "#eeeeee"             # Gridlines
+AE_ZERO_LINE = "#dddddd"        # Zero / reference lines
+AE_SPINE = "#d9d9d9"            # Axis spines
+
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+
+    /* Trim the busiest chrome but keep the run/stop toolbar and menu usable */
+    footer {visibility: hidden;}
+    [data-testid="stDeployButton"] {display: none;}
+
+    html, body, [class*="css"], .stApp {
+        font-family: 'DM Sans', sans-serif;
+        color: #484848;
+    }
+    .stApp { background-color: #ffffff; }
+
+    /* Section headings (st.title -> h1, st.subheader -> h3) */
+    h1 {
+        font-weight: 700 !important;
+        letter-spacing: -0.02em;
+        color: #484848 !important;
+    }
+    h2, h3 {
+        font-weight: 700 !important;
+        color: #484848 !important;
+        letter-spacing: -0.01em;
+        margin-top: 0.25rem !important;
+        margin-bottom: 0.35rem !important;
+    }
+
+    /* Branded header */
+    .ae-brand-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.15rem;
+    }
+    .ae-brand-header .ae-brand-name {
+        font-size: 1.7rem;
+        font-weight: 700;
+        color: #484848;
+        letter-spacing: -0.02em;
+    }
+    .ae-brand-header .ae-brand-tag {
+        font-size: 0.9rem;
+        color: #777788;
+        border-left: 2px solid #3A0CA3;
+        padding-left: 0.55rem;
+    }
+    .ae-brand-sub {
+        font-size: 0.82rem;
+        color: #666677;
+        margin-bottom: 1.25rem;
+    }
+
+    /* Dividers */
+    hr { border-color: #e8e8ee !important; }
+
+    /* Pills (if used): brand-purple active state */
+    button[data-testid="stBaseButton-pills"][aria-checked="true"] {
+        background-color: #f0edf8 !important;
+        border-color: #3A0CA3 !important;
+        color: #3A0CA3 !important;
+        font-weight: 600 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ---- matplotlib defaults carry the same look into every chart ----
+plt.rcParams.update({
+    "figure.facecolor": "#ffffff",
+    "savefig.facecolor": "#ffffff",
+    "axes.facecolor": "#ffffff",
+    "figure.dpi": 110,
+    "savefig.dpi": 150,
+    "font.family": "sans-serif",
+    "font.sans-serif": ["DM Sans", "Segoe UI", "Helvetica Neue", "Arial", "sans-serif"],
+    "text.color": AE_TEXT_PRIMARY,
+    "axes.labelcolor": AE_TEXT_SECONDARY,
+    "axes.titlecolor": AE_TEXT_PRIMARY,
+    "axes.edgecolor": AE_SPINE,
+    "axes.linewidth": 0.8,
+    "axes.labelsize": 11,
+    "axes.titlesize": 13,
+    "axes.titleweight": "bold",
+    "axes.grid": True,
+    "axes.axisbelow": True,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "grid.color": AE_GRID,
+    "grid.linewidth": 0.9,
+    "grid.alpha": 1.0,
+    "xtick.color": AE_TEXT_MUTED,
+    "ytick.color": AE_TEXT_MUTED,
+    "xtick.labelsize": 10,
+    "ytick.labelsize": 10,
+    "legend.frameon": True,
+    "legend.framealpha": 0.9,
+    "legend.facecolor": "#ffffff",
+    "legend.edgecolor": "#E5E7EB",
+    "legend.fontsize": 9,
+    "figure.titlesize": 14,
+    "figure.titleweight": "bold",
+})
+
+# =============================================================================
 # CONSTANTS
 # =============================================================================
 
@@ -93,12 +214,14 @@ INITIAL_CAPITAL = 10_000
 #   Strategy = brand purple, SPY = muted indigo, 60/40 = brand teal.
 # Categorical colors reuse teal (positive / risk-on) and purple (negative /
 # risk-off), matching the asset class chart convention in app.py.
-BRAND_PURPLE = "#3A0CA3"        # Strategy / primary
+BRAND_PURPLE = "#3A0CA3"        # Strategy / primary (hero, matches app.py)
 BRAND_PURPLE_FADE = "#8B7BC9"   # Lightened purple for secondary lines (e.g. 24mo Sortino)
-BRAND_INDIGO = "#5068B5"        # SPY / benchmark
-BRAND_TEAL = "#30C7B5"          # 60/40 / positive regime
-BRAND_STEEL = "#6A9BAD"         # 80/20 / steel blue-green (matches newsletter)
-BRAND_RED = "#9E2A2B"           # Loss / drawdown / risk-off semantic
+BRAND_INDIGO = "#9CA3AF"        # SPY / benchmark (neutral gray, matches app.py S&P 500)
+BRAND_BLUE = "#4361EE"          # 80/20 benchmark (matches app.py)
+BRAND_CYAN = "#4CC9F0"          # 60/40 benchmark (matches app.py)
+BRAND_TEAL = "#30C7B5"          # Positive regime / excess accent (brand teal)
+BRAND_STEEL = "#6A9BAD"         # Legacy steel blue-green (retained for reference)
+BRAND_RED = "#C0392B"           # Loss / drawdown / risk-off semantic (matches app.py)
 BRAND_GRAY = "#A8A8A8"          # Neutral / reference lines
 BRAND_TEXT = "#484848"          # Charcoal text
 BRAND_HIGHLIGHT_BG = "#F0EDF8"  # Light purple tint for selected table rows
@@ -110,10 +233,17 @@ BRAND_HIGHLIGHT_BG = "#F0EDF8"  # Light purple tint for selected table rows
 #   ticker     Yahoo Finance ticker (must be downloadable)
 #   color      matplotlib color (use a BRAND_* constant or a hex string)
 #   linestyle  matplotlib line style ("-", "--", "-.", ":")
+#   backfill   (optional) list of older tickers used to extend the
+#              benchmark's history backward via return-splicing. These are
+#              applied automatically on every run and do not appear in the
+#              sidebar backfill rows. AOR/AOA only go back to their 2008
+#              ETF inception, so we splice the Vanguard LifeStrategy mutual
+#              funds (global, same 60/40 and 80/20 structure, inception
+#              Sept 1994) onto them to reach the mid-1990s.
 # Set to [] to disable balanced benchmarks entirely.
 BAL_BENCHMARKS = [
-    {"label": "60/40", "ticker": "AOR", "color": BRAND_TEAL,  "linestyle": "--"},
-    {"label": "80/20", "ticker": "AOA", "color": BRAND_STEEL, "linestyle": "-."},
+    {"label": "60/40", "ticker": "AOR", "color": BRAND_CYAN, "linestyle": "--", "backfill": ["VSMGX"]},
+    {"label": "80/20", "ticker": "AOA", "color": BRAND_BLUE, "linestyle": "-.", "backfill": ["VASGX"]},
 ]
 
 _base_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in dir() else "."
@@ -561,6 +691,305 @@ def compute_leverage_signal(daily_prices, as_of_date, leverage_params,
     return 1.0, "unknown", {}
 
 
+# =============================================================================
+# BITCOIN TREND GATE (Radius Trend filter)
+# =============================================================================
+
+def download_gate_ohlc(ticker, start_date_str, force_refresh=False):
+    """
+    Download daily OHLC for a single trend-gate ticker (e.g. BTC-USD),
+    used only to compute the Bitcoin trend gate. The main price cache keeps
+    adjusted close only, so the gate needs high/low fetched separately.
+    Cached on its own in price_cache/gate_ohlc_<ticker>.csv. Returns a
+    DataFrame with High, Low, Close columns (daily), or an empty DataFrame
+    on failure. BTC-USD has no dividends or splits, so adjusted and raw
+    prices match.
+    """
+    safe = "".join(c if c.isalnum() else "_" for c in ticker)
+    cache_path = os.path.join(CACHE_DIR, f"gate_ohlc_{safe}.csv")
+
+    cached = pd.DataFrame()
+    if not force_refresh and os.path.exists(cache_path):
+        try:
+            cached = pd.read_csv(cache_path, index_col=0, parse_dates=True)
+        except Exception:
+            cached = pd.DataFrame()
+
+    start_from = start_date_str
+    if not cached.empty:
+        # Re-download fully if the cache starts later than we now need
+        if cached.index.min() > pd.Timestamp(start_date_str) + pd.Timedelta(days=7):
+            cached = pd.DataFrame()
+        else:
+            last = cached.dropna(how="all").index.max()
+            start_from = (last - pd.Timedelta(days=5)).strftime("%Y-%m-%d")
+
+    fresh = pd.DataFrame()
+    try:
+        data = yf.download(ticker, start=start_from, auto_adjust=True, progress=False)
+        if data is not None and not data.empty:
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = data.columns.get_level_values(0)
+            keep = [c for c in ["High", "Low", "Close"] if c in data.columns]
+            if len(keep) == 3:
+                fresh = data[keep].copy()
+    except Exception:
+        fresh = pd.DataFrame()
+
+    if fresh.empty and cached.empty:
+        return pd.DataFrame()
+
+    if fresh.empty:
+        combined = cached
+    elif cached.empty:
+        combined = fresh
+    else:
+        combined = cached.copy()
+        new_dates = fresh.index.difference(combined.index)
+        if len(new_dates) > 0:
+            combined = pd.concat([combined, fresh.loc[new_dates]])
+        overlap = fresh.index.intersection(combined.index)
+        if len(overlap) > 0:
+            combined.loc[overlap, fresh.columns] = fresh.loc[overlap]
+
+    combined = combined.sort_index()
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        combined.to_csv(cache_path)
+    except Exception:
+        pass
+
+    keep = [c for c in ["High", "Low", "Close"] if c in combined.columns]
+    return combined[keep] if len(keep) == 3 else pd.DataFrame()
+
+
+def compute_radius_trend_state(ohlc, step=0.15, multi=0.5, n=3):
+    """
+    Python port of the 'Radius Trend Strategy [ChartPrime]' Pine Script v5,
+    a long-only trailing-band trend filter, run on one asset's daily OHLC.
+
+    The band resets just below the recent low when trend flips up and just
+    above the recent high when it flips down, then ratchets toward price at
+    an accelerating rate every n-th bar (the multi1/multi2 step accumulation).
+
+    Returns a DataFrame indexed like `ohlc` with columns:
+        trend      1.0 when close is above the band (uptrend), 0.0 below,
+                   NaN before the indicator is seeded
+        band       the trailing band level
+        band1      the trade trigger line (upper band in an uptrend, lower
+                   band in a downtrend); an n-bar SMA, per the script
+        position   1.0 when the long-only strategy would be in the market,
+                   0.0 when flat. Enters on trend up with close > band1,
+                   exits on trend down with close < band1, holds in between.
+        close      the bar's close (carried for display)
+
+    The indicator is causal (each bar depends only on prior and current
+    bars), so computing the full series once and reading it as of a past
+    date introduces no look-ahead. This is a close approximation of the
+    TradingView indicator; small differences can arise from data-feed
+    calendar and start-date differences, since the n-bar ratchet cadence
+    is bar-count dependent.
+    """
+    cols = ["trend", "band", "band1", "position", "close"]
+    if ohlc is None or ohlc.empty or not {"High", "Low", "Close"}.issubset(ohlc.columns):
+        return pd.DataFrame(columns=cols)
+
+    df = ohlc[["High", "Low", "Close"]].dropna()
+    nbars = len(df)
+    out = pd.DataFrame(index=df.index, columns=cols, dtype=float)
+    if nbars < 103:
+        return out  # not enough bars to seed the 100-bar range average
+
+    high = df["High"].to_numpy(dtype=float)
+    low = df["Low"].to_numpy(dtype=float)
+    close = df["Close"].to_numpy(dtype=float)
+
+    rng = np.abs(high - low)
+    range_sma = pd.Series(rng).rolling(100).mean().to_numpy()
+    distance = range_sma * multi      # band reset offset
+    distance1 = range_sma * 0.2       # per-step ratchet size
+
+    trend_arr = np.full(nbars, np.nan)
+    band_arr = np.full(nbars, np.nan)
+
+    band = np.nan
+    multi1 = 0.0
+    multi2 = 0.0
+    prev_trend = np.nan
+
+    for i in range(nbars):
+        trend = np.nan
+
+        # Seed at bar index 101 (matches Pine's `if bar_index == 101`)
+        if i == 101:
+            band = low[i] * 0.8
+
+        if not np.isnan(band):
+            if close[i] < band:
+                trend = 0.0
+            elif close[i] > band:
+                trend = 1.0
+
+        if np.isnan(trend):
+            band_arr[i] = band
+            prev_trend = trend
+            continue
+
+        # Band reset on a trend flip (uses this bar's distance)
+        if (not np.isnan(prev_trend)) and (trend != prev_trend):
+            if prev_trend == 0.0 and trend == 1.0:
+                band = low[i] - distance[i]
+            elif prev_trend == 1.0 and trend == 0.0:
+                band = high[i] + distance[i]
+
+        # Accelerating ratchet every n-th bar
+        if (i % n == 0) and trend == 1.0:
+            multi1 = 0.0
+            multi2 += step
+            band += distance1[i] * multi2
+        elif (i % n == 0) and trend == 0.0:
+            multi1 += step
+            multi2 = 0.0
+            band -= distance1[i] * multi1
+
+        trend_arr[i] = trend
+        band_arr[i] = band
+        prev_trend = trend
+
+    # Trigger line band1 = n-bar SMA of (band +/- distance*0.5)
+    band_series = pd.Series(band_arr, index=df.index)
+    dist_series = pd.Series(distance, index=df.index)
+    trend_series = pd.Series(trend_arr, index=df.index)
+    band_upper = (band_series + dist_series * 0.5).rolling(n).mean()
+    band_lower = (band_series - dist_series * 0.5).rolling(n).mean()
+    band1 = band_upper.where(trend_series == 1.0, band_lower)
+    b1 = band1.to_numpy()
+
+    # Long-only position state (stateful sweep matching strategy.entry/close)
+    position = np.zeros(nbars)
+    in_pos = False
+    for i in range(nbars):
+        if np.isnan(trend_arr[i]) or np.isnan(b1[i]):
+            position[i] = 1.0 if in_pos else 0.0
+            continue
+        if (trend_arr[i] == 1.0) and (close[i] > b1[i]):
+            in_pos = True
+        elif (trend_arr[i] == 0.0) and (close[i] < b1[i]):
+            in_pos = False
+        position[i] = 1.0 if in_pos else 0.0
+
+    out["trend"] = trend_series
+    out["band"] = band_series
+    out["band1"] = band1
+    out["position"] = position
+    out["close"] = pd.Series(close, index=df.index)
+    return out
+
+
+def compute_sma_cross_state(ohlc, sma_len=150, rf_len=20, rf_period=20):
+    """
+    Daily port of the "Simple SMA Cross Strategy: 8H BTC" Pine Script v5.
+
+    The original runs on 8-hour bars with a 450-bar long SMA and a 60-bar
+    rising/falling SMA. Bitcoin trades around the clock, so a day holds three
+    8-hour bars. Dividing the bar counts by three converts the rules to daily
+    bars (450 -> 150, 60 -> 20) while preserving the same calendar windows.
+
+    Long-only state machine, matching the script's entries and exits:
+        ENTER  when close > long SMA, the prior close was at or above the long
+               SMA, and the fast SMA has risen on each of the last rf_period
+               bars (Pine's ta.rising).
+        EXIT   when close is below the long SMA for three straight bars, OR the
+               fast SMA has fallen on each of the last rf_period bars (Pine's
+               ta.falling).
+        HOLD   in between (pyramiding is 1 in the script, so a single
+               long-or-flat state).
+
+    Returns a DataFrame indexed like ohlc with columns:
+        position   1.0 while the long-only strategy is in the market, 0.0 flat.
+                   This is the faithful entry/exit state machine.
+        trend      1.0 whenever close is above the long SMA and the fast SMA is
+                   rising, 0.0 otherwise. A looser, stateless reading used by
+                   the "trend up only" gate mode.
+        sma_long   the long trend SMA (default 150-day)
+        sma_fast   the fast rising/falling SMA (default 20-day)
+        close      the bar's close (carried for display)
+
+    The state machine is causal (each bar depends only on prior and current
+    bars), so reading the position as of a past date introduces no look-ahead.
+    Because the daily bar count differs from the 8-hour chart, this is a close
+    approximation of the TradingView result rather than an exact reproduction.
+    """
+    cols = ["position", "trend", "sma_long", "sma_fast", "close"]
+    if ohlc is None or ohlc.empty or "Close" not in ohlc.columns:
+        return pd.DataFrame(columns=cols)
+
+    close = ohlc["Close"].dropna().astype(float)
+    n = len(close)
+    out = pd.DataFrame(index=close.index, columns=cols, dtype=float)
+    if n < max(sma_len, rf_len + rf_period) + 3:
+        out["close"] = close
+        return out  # not enough history to seed the SMAs
+
+    sma_long = close.rolling(sma_len).mean()
+    sma_fast = close.rolling(rf_len).mean()
+
+    # ta.rising(src, len) / ta.falling(src, len): every one of the last `len`
+    # bar-over-bar steps of the fast SMA was up (rising) or down (falling).
+    step = sma_fast.diff()
+    up_steps = (step > 0).astype(float)
+    dn_steps = (step < 0).astype(float)
+    rising = (up_steps.rolling(rf_period).sum() == rf_period)
+    falling = (dn_steps.rolling(rf_period).sum() == rf_period)
+
+    above = close > sma_long
+    prev_at_or_above = close.shift(1) >= sma_long.shift(1)
+    long_cond = (above & prev_at_or_above & rising).to_numpy()
+
+    below = close < sma_long
+    below1 = below.shift(1, fill_value=False)
+    below2 = below.shift(2, fill_value=False)
+    exit_three_below = below & below1 & below2
+    exit_cond = (exit_three_below | falling).to_numpy()
+
+    # Stateful sweep matching strategy.entry("Long") / strategy.close_all()
+    position = np.zeros(n)
+    in_pos = False
+    for i in range(n):
+        if not in_pos:
+            if long_cond[i]:
+                in_pos = True
+        else:
+            if exit_cond[i]:
+                in_pos = False
+        position[i] = 1.0 if in_pos else 0.0
+
+    out["position"] = position
+    out["trend"] = (above & rising).astype(float)
+    out["sma_long"] = sma_long
+    out["sma_fast"] = sma_fast
+    out["close"] = close
+    return out
+
+
+def _gate_open_as_of(btc_gate, as_of_date):
+    """
+    Return True if the Bitcoin trend gate is open as of `as_of_date`.
+    When the gate is disabled or unconfigured, returns True so the gated
+    ticker behaves like any other fixed-basket asset (default behavior is
+    unchanged unless the gate is explicitly enabled).
+    """
+    if not btc_gate or not btc_gate.get("enabled"):
+        return True
+    series = btc_gate.get("gate_series")
+    if series is None or len(series) == 0:
+        return False
+    s = series.loc[:as_of_date]
+    if len(s) == 0:
+        return False
+    return bool(s.iloc[-1])
+
+
 def run_backtest(daily_prices, monthly_prices, params):
     """
     Run the adaptive portfolio backtest with the given parameters.
@@ -581,6 +1010,18 @@ def run_backtest(daily_prices, monthly_prices, params):
     backtest_start = params["backtest_start"]
     backtest_end = params.get("backtest_end", "")
     leverage_params = params.get("leverage_params", {"enabled": False})
+
+    # Bitcoin trend gate (Radius Trend). When enabled, the gated ticker is
+    # only admitted to the basket on months when its trend signal is "in".
+    btc_gate = params.get("btc_gate", {})
+    btc_gate_ticker = btc_gate.get("ticker") if btc_gate.get("enabled") else None
+
+    # Bitcoin SMA cross gate (separate, parallel filter ported from the 8H
+    # Pine strategy). Independent of the Radius Trend gate. When both gates are
+    # enabled on the same ticker, the ticker must pass BOTH to be eligible
+    # (the stricter, drawdown-friendly combination).
+    btc_sma_gate = params.get("btc_sma_gate", {})
+    btc_sma_gate_ticker = btc_sma_gate.get("ticker") if btc_sma_gate.get("enabled") else None
 
     min_lookback = max(main_lookbacks)
     valid_months = monthly_prices.index[min_lookback:]
@@ -613,6 +1054,14 @@ def run_backtest(daily_prices, monthly_prices, params):
             if t in monthly_prices.columns:
                 ps = monthly_prices[t].loc[:rebal_date].dropna()
                 if len(ps) > min_lookback:
+                    # Bitcoin trend gate: skip the gated ticker on months
+                    # when its Radius Trend signal is "out".
+                    if t == btc_gate_ticker and not _gate_open_as_of(btc_gate, rebal_date):
+                        continue
+                    # Bitcoin SMA cross gate: skip the gated ticker on months
+                    # when its SMA cross signal is "out".
+                    if t == btc_sma_gate_ticker and not _gate_open_as_of(btc_sma_gate, rebal_date):
+                        continue
                     basket.append(t)
 
         selected_equities = []
@@ -749,6 +1198,26 @@ def run_backtest(daily_prices, monthly_prices, params):
                 r = holding_details[t]["return"]
                 holdings_str_parts.append(f"{t}: {w:.1%} (ret: {r:+.2%})")
 
+        # Bitcoin gate status for this month (for the trade log)
+        if btc_gate_ticker is None:
+            btc_gate_status = "off"
+        elif btc_gate_ticker not in monthly_prices.columns or len(
+            monthly_prices[btc_gate_ticker].loc[:rebal_date].dropna()
+        ) <= min_lookback:
+            btc_gate_status = "n/a"
+        else:
+            btc_gate_status = "in" if _gate_open_as_of(btc_gate, rebal_date) else "out"
+
+        # Bitcoin SMA cross gate status for this month (for the trade log)
+        if btc_sma_gate_ticker is None:
+            btc_sma_gate_status = "off"
+        elif btc_sma_gate_ticker not in monthly_prices.columns or len(
+            monthly_prices[btc_sma_gate_ticker].loc[:rebal_date].dropna()
+        ) <= min_lookback:
+            btc_sma_gate_status = "n/a"
+        else:
+            btc_sma_gate_status = "in" if _gate_open_as_of(btc_sma_gate, rebal_date) else "out"
+
         trade_log.append({
             "rebal_date": rebal_date.strftime("%Y-%m-%d"),
             "hold_month": next_month_end.strftime("%Y-%m"),
@@ -756,6 +1225,8 @@ def run_backtest(daily_prices, monthly_prices, params):
             "exec_exit": exec_date_exit.strftime("%Y-%m-%d") if i < len(valid_months) - 2 else "",
             "basket": ", ".join(basket),
             "equities_selected": ", ".join(selected_equities) if selected_equities else "N/A",
+            "btc_gate": btc_gate_status,
+            "btc_sma_gate": btc_sma_gate_status,
             "final_holdings": " | ".join(holdings_str_parts),
             "leverage": f"{lev_mult:.2f}x",
             "lev_regime": lev_regime,
@@ -807,6 +1278,12 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
     final_top_n = params["final_top_n"]
     vol_months = params["vol_months"]
 
+    btc_gate = params.get("btc_gate", {})
+    btc_gate_ticker = btc_gate.get("ticker") if btc_gate.get("enabled") else None
+
+    btc_sma_gate = params.get("btc_sma_gate", {})
+    btc_sma_gate_ticker = btc_sma_gate.get("ticker") if btc_sma_gate.get("enabled") else None
+
     min_lookback = max(main_lookbacks)
 
     # Build basket
@@ -815,6 +1292,10 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
         if t in monthly_prices_local.columns:
             ps = monthly_prices_local[t].loc[:signal_date].dropna()
             if len(ps) > min_lookback:
+                if t == btc_gate_ticker and not _gate_open_as_of(btc_gate, signal_date):
+                    continue
+                if t == btc_sma_gate_ticker and not _gate_open_as_of(btc_sma_gate, signal_date):
+                    continue
                 basket.append(t)
 
     selected_equities = []
@@ -910,6 +1391,89 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
     }
 
 
+def compute_equity_subselection_details(daily_prices, monthly_prices_local,
+                                        params, signal_date):
+    """
+    Build the equity sub-selection ranking table as of signal_date.
+
+    The main "Current Model Signals" table ranks every basket asset by the
+    MAIN momentum lookback. Equities, however, are pre-filtered by a SEPARATE
+    equity momentum lookback before they ever reach the main basket: only the
+    top equity_top_n equity ETFs (ranked by the equity blend) are admitted.
+
+    This table exposes that pre-filter, so it is clear why an equity ETF that
+    looks strong on the main lookback (and would therefore rank high in the
+    signals table) can still be left out: it lost the equity-lookback contest.
+
+    Columns mirror the signals table minus Weight, but the per-period return
+    columns and the Blended score use the EQUITY lookbacks, not the main ones.
+
+    Returns a list of row dicts sorted by equity blended momentum (descending),
+    or [] when equity selection is disabled or there is not enough history. The
+    selection logic here intentionally mirrors _compute_signal_at so the picks
+    match the basket exactly.
+    """
+    equity_tickers = params["equity_tickers"]
+    equity_top_n = params["equity_top_n"]
+    equity_lookbacks = params["equity_lookbacks"]
+    equity_lookback_weights = params["equity_lookback_weights"]
+    main_lookbacks = params["main_lookbacks"]
+    vol_months = params["vol_months"]
+
+    if equity_top_n <= 0 or len(equity_tickers) == 0:
+        return []
+
+    min_lookback = max(main_lookbacks)
+    min_eq_history = max(max(equity_lookbacks), min_lookback)
+
+    # Equity ETFs with enough history to be eligible this period (same gate
+    # as _compute_signal_at).
+    eq_available = []
+    for t in equity_tickers:
+        if t in monthly_prices_local.columns:
+            ps = monthly_prices_local[t].loc[:signal_date].dropna()
+            if len(ps) > min_eq_history:
+                eq_available.append(t)
+
+    if len(eq_available) == 0:
+        return []
+
+    # Rank by the equity-lookback blend (the actual selection rule).
+    eq_subset = monthly_prices_local[eq_available].loc[:signal_date]
+    eq_mom = compute_blended_momentum(
+        eq_subset, equity_lookbacks, equity_lookback_weights
+    )
+    latest_eq = eq_mom.iloc[-1].dropna().sort_values(ascending=False)
+    selected_equities = latest_eq.head(equity_top_n).index.tolist()
+
+    eq_lb_cols = sorted(set(equity_lookbacks))
+
+    rows = []
+    for t in latest_eq.index:
+        row = {"Asset": t, "Equity Pick": t in selected_equities}
+
+        for lb in eq_lb_cols:
+            ret = compute_total_return(
+                monthly_prices_local[[t]].loc[:signal_date], lb
+            )
+            val = ret.iloc[-1].values[0] if len(ret) > 0 else np.nan
+            row[f"{lb}mo Return"] = val
+
+        row["Blended Score"] = latest_eq.get(t, np.nan)
+
+        lookback_start = signal_date - pd.DateOffset(months=vol_months)
+        vol_subset = daily_prices[t].loc[lookback_start:signal_date].dropna()
+        if len(vol_subset) > 20:
+            daily_ret = vol_subset.pct_change().dropna()
+            row[f"{vol_months}mo Vol (ann)"] = daily_ret.std() * np.sqrt(252)
+        else:
+            row[f"{vol_months}mo Vol (ann)"] = np.nan
+
+        rows.append(row)
+
+    return rows
+
+
 def compute_current_signals(daily_prices, monthly_prices, params):
     """
     Compute model signals for the most recent available trading date.
@@ -951,6 +1515,12 @@ def compute_current_signals(daily_prices, monthly_prices, params):
     if live is None:
         return None
 
+    # Equity sub-selection ranking (ranked by the equity lookback, not the
+    # main lookback). Explains which equity ETFs win the pre-filter.
+    equity_details = compute_equity_subselection_details(
+        daily_prices, effective_monthly, params, signal_date
+    )
+
     # ---- PREVIOUS MONTH-END SIGNAL (reference) ----
     # Find the most recent completed calendar month-end (a true month-end
     # in the original monthly_prices index that is at or before last_daily,
@@ -973,6 +1543,7 @@ def compute_current_signals(daily_prices, monthly_prices, params):
 
     return {
         **live,
+        "equity_details": equity_details,
         "prev_month_end_date": prev_month_end_date,
         "prev_holdings": prev_holdings,
         "prev_weights": prev_weights,
@@ -1108,6 +1679,27 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
                 f"on={lev['mult_risk_on']:.2f}/off={lev['mult_risk_off']:.2f}"
             )
 
+    bg = params.get("btc_gate", {})
+    if bg.get("enabled"):
+        bg_mode = "long-position" if bg.get("mode") == "position" else "trend-up"
+        bg_summary = (
+            f"{bg.get('ticker', 'BTC-USD')} Radius Trend ({bg_mode}), "
+            f"step={bg.get('step', 0.15)}, dist={bg.get('multi', 0.5)}"
+        )
+    else:
+        bg_summary = "Off"
+
+    sg = params.get("btc_sma_gate", {})
+    if sg.get("enabled"):
+        sg_mode = "long-position" if sg.get("mode") == "position" else "trend-up"
+        sg_summary = (
+            f"{sg.get('ticker', 'BTC-USD')} SMA cross ({sg_mode}), "
+            f"SMA={sg.get('sma_len', 150)}, rf_len={sg.get('rf_len', 20)}, "
+            f"rf_period={sg.get('rf_period', 20)}"
+        )
+    else:
+        sg_summary = "Off"
+
     row = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "Fixed Assets": ", ".join(params["fixed_tickers"]),
@@ -1119,6 +1711,8 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
         "Final Top N": params["final_top_n"],
         "Vol Window (months)": params["vol_months"],
         "Leverage": lev_summary,
+        "BTC Gate": bg_summary,
+        "BTC SMA Gate": sg_summary,
         "Backtest Start": params["backtest_start"],
         "Backtest End": params.get("backtest_end", ""),
         "Period": strat_metrics.get("Period", ""),
@@ -1317,7 +1911,7 @@ def plot_annual_returns(strat_returns, bench_returns):
     ax.set_xlabel("Year")
     ax.set_ylabel("Annual Return")
     ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
-    ax.axhline(0, color="black", linewidth=0.5)
+    ax.axhline(0, color="#cccccc", linewidth=0.5)
     ax.legend(loc="upper left")
     ax.set_axisbelow(True)
     ax.grid(True, axis="y", alpha=0.25)
@@ -1450,7 +2044,7 @@ def plot_rolling_sortino(strat_returns, bench_returns, rf_monthly=None):
     ax.plot(strat_24.index, strat_24.values, label="Strategy (24mo)", linewidth=1.0, color=BRAND_PURPLE_FADE, alpha=0.5)
     ax.plot(bench_36.index, bench_36.values, label="SPY (36mo)", linewidth=1.8, color=BRAND_INDIGO, linestyle="--")
 
-    ax.axhline(0, color="black", linewidth=0.5)
+    ax.axhline(0, color="#cccccc", linewidth=0.5)
     ax.axhline(1.0, color=BRAND_GRAY, linewidth=0.5, linestyle=":", alpha=0.5)
     ax.set_ylabel("Sortino Ratio")
     ax.legend(loc="upper left", fontsize=8)
@@ -1482,23 +2076,23 @@ def plot_rolling_calmar(strat_returns, bench_returns,
                  fontsize=14, fontweight="bold")
 
     ax.plot(strat_60.index, strat_60.values, label="Strategy (60mo)",
-            linewidth=2.0, color="#1a5276")
+            linewidth=2.0, color=BRAND_PURPLE)
     ax.plot(strat_36.index, strat_36.values, label="Strategy (36mo)",
-            linewidth=1.0, color="#5dade2", alpha=0.5)
+            linewidth=1.0, color=BRAND_PURPLE_FADE, alpha=0.5)
     ax.plot(bench_60.index, bench_60.values, label="SPY (60mo)",
-            linewidth=1.8, color="#e67e22", linestyle="--")
+            linewidth=1.8, color=BRAND_INDIGO, linestyle="--")
 
-    ax.axhline(0, color="black", linewidth=0.5)
-    ax.axhline(1.0, color="#999", linewidth=0.5, linestyle=":", alpha=0.5)
+    ax.axhline(0, color="#cccccc", linewidth=0.5)
+    ax.axhline(1.0, color=BRAND_GRAY, linewidth=0.5, linestyle=":", alpha=0.5)
 
     # Cap y-axis. Annotate any windows that exceed the cap.
     y_min, y_max = 0, 5
     ax.set_ylim(y_min, y_max)
 
     for series, color in [
-        (strat_60, "#1a5276"),
-        (strat_36, "#5dade2"),
-        (bench_60, "#e67e22"),
+        (strat_60, BRAND_PURPLE),
+        (strat_36, BRAND_PURPLE_FADE),
+        (bench_60, BRAND_INDIGO),
     ]:
         spikes = series[series > y_max].dropna()
         for date, val in spikes.items():
@@ -1527,7 +2121,7 @@ def plot_rolling_cagr(strat_returns, bench_returns):
     ax.plot(strat_36.index, strat_36.values, label="Strategy", linewidth=2.0, color=BRAND_PURPLE)
     ax.plot(bench_36.index, bench_36.values, label="SPY", linewidth=1.8, color=BRAND_INDIGO, linestyle="--")
 
-    ax.axhline(0, color="black", linewidth=0.5)
+    ax.axhline(0, color="#cccccc", linewidth=0.5)
     ax.set_ylabel("Annualized Return")
     ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
     ax.legend(loc="upper left", fontsize=8)
@@ -1601,7 +2195,7 @@ def plot_rolling_excess(strat_returns, bench_returns):
                     where=(excess.values < 0), color=BRAND_RED, alpha=0.4, interpolate=True)
     ax.plot(excess.index, excess.values, color=BRAND_TEXT, linewidth=1.2)
 
-    ax.axhline(0, color="black", linewidth=0.8)
+    ax.axhline(0, color="#cccccc", linewidth=0.8)
     ax.set_ylabel("Excess Annualized Return")
     ax.yaxis.set_major_formatter(mtick.PercentFormatter(1.0))
     ax.grid(True, alpha=0.3)
@@ -1658,7 +2252,7 @@ def plot_leverage_timeline(trade_df, leverage_params):
                 colors.append(BRAND_GRAY)
 
     ax.bar(df["date"], df["lev_val"], width=25, color=colors, alpha=0.7, edgecolor="none")
-    ax.axhline(1.0, color="black", linewidth=0.8, linestyle="--", alpha=0.5)
+    ax.axhline(1.0, color="#cccccc", linewidth=0.8, linestyle="--", alpha=0.5)
     ax.set_ylabel("Leverage Multiplier")
     ax.set_ylim(0, max(df["lev_val"].max() * 1.15, 1.5))
     ax.grid(True, alpha=0.3)
@@ -1792,7 +2386,7 @@ with st.sidebar.expander("Leverage", expanded=False):
         mult_leveraged = st.number_input(
             "Leverage multiplier (when no defensives held)",
             min_value=1.0,
-            max_value=2.0,
+            max_value=4.0,
             value=1.25,
             step=0.05,
             key="mult_leveraged",
@@ -1898,6 +2492,192 @@ with st.sidebar.expander("Leverage", expanded=False):
             "mult_risk_on": mult_risk_on,
             "mult_neutral": 1.0,
             "mult_risk_off": mult_risk_off,
+        }
+
+# ---- BITCOIN TREND GATE ----
+btc_gate_ui = {"enabled": False}
+with st.sidebar.expander("Bitcoin Trend Gate", expanded=False):
+    st.caption(
+        "Gate Bitcoin into the basket using the Radius Trend filter ported "
+        "from the TradingView strategy. When on, BTC-USD is only eligible for "
+        "the monthly basket while its trend signal is in the market, and it "
+        "still competes for a slot on momentum like every other asset. When "
+        "off, BTC behaves like any other fixed-basket asset."
+    )
+
+    btc_gate_on = st.checkbox(
+        "Enable Bitcoin trend gate",
+        value=False,
+        key="btc_gate_on",
+    )
+
+    if btc_gate_on:
+        btc_gate_ticker_ui = st.text_input(
+            "Gate ticker",
+            value="BTC-USD",
+            key="btc_gate_ticker",
+            help="The fixed-basket asset this gate controls. Defaults to BTC-USD.",
+        ).strip().upper()
+
+        btc_gate_mode_label = st.selectbox(
+            "Gate rule",
+            options=[
+                "Long position (matches the strategy)",
+                "Trend up only (looser)",
+            ],
+            index=0,
+            key="btc_gate_mode",
+            help=(
+                "Long position mirrors the script's actual entries and exits: "
+                "enter on trend up with price above the upper band, hold until "
+                "trend down with price below the lower band. Trend up only "
+                "admits BTC whenever the band reads as an uptrend."
+            ),
+        )
+        btc_gate_mode = "position" if btc_gate_mode_label.startswith("Long") else "trend"
+
+        bg_c1, bg_c2 = st.columns(2)
+        with bg_c1:
+            btc_gate_step = st.number_input(
+                "Radius Step",
+                min_value=0.001,
+                max_value=2.0,
+                value=0.15,
+                step=0.001,
+                format="%.3f",
+                key="btc_gate_step",
+                help="Matches the 'Radius Step' input in the TradingView strategy.",
+            )
+        with bg_c2:
+            btc_gate_multi = st.number_input(
+                "Start Points Distance",
+                min_value=0.1,
+                max_value=5.0,
+                value=0.5,
+                step=0.1,
+                key="btc_gate_multi",
+                help="Matches the 'Start Points Distance' input in the TradingView strategy.",
+            )
+
+        st.caption(
+            "Computed on daily BTC-USD bars. This is a close approximation of "
+            "the TradingView indicator; small differences can arise from data "
+            "feed and bar-count alignment."
+        )
+
+        btc_gate_ui = {
+            "enabled": True,
+            "ticker": btc_gate_ticker_ui,
+            "mode": btc_gate_mode,
+            "step": float(btc_gate_step),
+            "multi": float(btc_gate_multi),
+            "n": 3,
+            "timeframe": "daily",
+        }
+
+# ---- BITCOIN SMA CROSS GATE ----
+btc_sma_gate_ui = {"enabled": False}
+with st.sidebar.expander("Bitcoin SMA Cross Gate", expanded=False):
+    st.caption(
+        "A second, independent gate ported from the 8-hour 'Simple SMA Cross' "
+        "TradingView strategy, converted to daily bars. When on, BTC-USD is "
+        "only eligible for the monthly basket while the SMA cross signal is in "
+        "the market, and it still competes for a slot on momentum like every "
+        "other asset. This is separate from the Radius Trend gate above. If "
+        "both gates are enabled on the same ticker, BTC must pass both."
+    )
+
+    btc_sma_gate_on = st.checkbox(
+        "Enable Bitcoin SMA cross gate",
+        value=False,
+        key="btc_sma_gate_on",
+    )
+
+    if btc_sma_gate_on:
+        btc_sma_gate_ticker_ui = st.text_input(
+            "Gate ticker",
+            value="BTC-USD",
+            key="btc_sma_gate_ticker",
+            help="The fixed-basket asset this gate controls. Defaults to BTC-USD.",
+        ).strip().upper()
+
+        btc_sma_gate_mode_label = st.selectbox(
+            "Gate rule",
+            options=[
+                "Long position (matches the strategy)",
+                "Trend up only (looser)",
+            ],
+            index=0,
+            key="btc_sma_gate_mode",
+            help=(
+                "Long position mirrors the script's entries and exits: enter "
+                "when price is above the long SMA, the prior bar was above it, "
+                "and the fast SMA has been rising; exit when price closes below "
+                "the long SMA for three straight bars or the fast SMA turns "
+                "down. Trend up only admits BTC whenever price is above the "
+                "long SMA and the fast SMA is rising, ignoring the exit logic."
+            ),
+        )
+        btc_sma_gate_mode = (
+            "position" if btc_sma_gate_mode_label.startswith("Long") else "trend"
+        )
+
+        st.caption(
+            "Defaults convert the 8-hour script to daily bars (three 8-hour "
+            "bars per day): SMA 450 -> 150, rising/falling SMA 60 -> 20, "
+            "rising/falling period 60 -> 20."
+        )
+
+        sg_c1, sg_c2 = st.columns(2)
+        with sg_c1:
+            btc_sma_long_len = st.number_input(
+                "Long SMA length (days)",
+                min_value=2,
+                max_value=600,
+                value=150,
+                step=1,
+                key="btc_sma_long_len",
+                help="Daily equivalent of the script's 450-bar 8-hour SMA.",
+            )
+        with sg_c2:
+            btc_sma_fast_len = st.number_input(
+                "Rising/falling SMA length (days)",
+                min_value=2,
+                max_value=200,
+                value=20,
+                step=1,
+                key="btc_sma_fast_len",
+                help="Daily equivalent of the script's 60-bar 8-hour fast SMA.",
+            )
+
+        btc_sma_rf_period = st.number_input(
+            "Rising/falling period (days)",
+            min_value=1,
+            max_value=200,
+            value=20,
+            step=1,
+            key="btc_sma_rf_period",
+            help=(
+                "How many consecutive daily bars the fast SMA must rise (to "
+                "enter) or fall (to exit), matching Pine's ta.rising/ta.falling. "
+                "Daily equivalent of the script's 60-bar period."
+            ),
+        )
+
+        st.caption(
+            "Computed on daily BTC-USD bars. This is a close approximation of "
+            "the 8-hour TradingView strategy; signals differ somewhat because "
+            "the bar count and bar timing are not the same on daily data."
+        )
+
+        btc_sma_gate_ui = {
+            "enabled": True,
+            "ticker": btc_sma_gate_ticker_ui,
+            "mode": btc_sma_gate_mode,
+            "sma_len": int(btc_sma_long_len),
+            "rf_len": int(btc_sma_fast_len),
+            "rf_period": int(btc_sma_rf_period),
+            "timeframe": "daily",
         }
 
 # ---- RUN BACKTEST (second position) ----
@@ -2040,6 +2820,15 @@ with st.sidebar.expander("Backfill Rules", expanded=False):
             if chain_list:
                 backfill_rules[bf_primary] = chain_list
 
+# Always back-fill the balanced benchmarks from the proxies declared in
+# BAL_BENCHMARKS, regardless of the sidebar backfill rows above. This keeps
+# AOR/AOA history extended back to the mid-1990s (via VSMGX/VASGX) on every
+# run so the benchmark lines match the strategy and SPY across the full window.
+for _bcfg in BAL_BENCHMARKS:
+    _bf_chain = _bcfg.get("backfill")
+    if _bf_chain:
+        backfill_rules[_bcfg["ticker"]] = [t.strip().upper() for t in _bf_chain]
+
 # ---- DATA CACHE ----
 st.sidebar.markdown("---")
 st.sidebar.header("Data Cache")
@@ -2076,7 +2865,21 @@ else:
 # MAIN AREA
 # =============================================================================
 
-st.title("Adaptive Portfolio Strategy Dashboard")
+st.markdown(
+    """
+    <div class="ae-brand-header">
+        <span class="ae-brand-name">Adaptive Portfolio Strategy</span>
+        <span class="ae-brand-tag">Backtest Dashboard</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+st.markdown(
+    f'<p class="ae-brand-sub">Momentum + risk-parity allocation across an '
+    f'uncorrelated asset basket &nbsp;&middot;&nbsp; '
+    f'Loaded {datetime.now().strftime("%b %d, %Y, %I:%M %p")}</p>',
+    unsafe_allow_html=True,
+)
 
 st.markdown("---")
 
@@ -2184,6 +2987,105 @@ if run_button:
                     [f"{k} <- {', '.join(v)}" for k, v in backfill_rules.items()]
                 ) if backfill_rules else "None"
 
+                # ---- BITCOIN TREND GATE (compute the daily signal once) ----
+                btc_gate_config = {"enabled": False}
+                btc_gate_state_for_display = None
+                if btc_gate_ui.get("enabled"):
+                    g_ticker = btc_gate_ui["ticker"]
+                    if g_ticker not in selected_fixed:
+                        st.warning(
+                            f"Bitcoin trend gate is on, but {g_ticker} is not in the "
+                            f"fixed basket, so the gate has no effect. Add {g_ticker} "
+                            f"under Fixed Basket Assets to use the gate."
+                        )
+                    with st.spinner(f"Computing {g_ticker} trend gate..."):
+                        gate_ohlc = download_gate_ohlc(
+                            g_ticker, download_start, force_refresh=force_refresh
+                        )
+                    if gate_ohlc is None or gate_ohlc.empty:
+                        st.warning(
+                            f"Could not load OHLC data for {g_ticker}; the Bitcoin "
+                            f"trend gate is disabled for this run."
+                        )
+                    else:
+                        gate_state = compute_radius_trend_state(
+                            gate_ohlc,
+                            step=btc_gate_ui["step"],
+                            multi=btc_gate_ui["multi"],
+                            n=btc_gate_ui.get("n", 3),
+                        )
+                        open_col = "position" if btc_gate_ui["mode"] == "position" else "trend"
+                        if gate_state is None or gate_state.empty or open_col not in gate_state.columns:
+                            st.warning(
+                                f"Trend gate signal could not be computed for "
+                                f"{g_ticker}; gate disabled for this run."
+                            )
+                        else:
+                            btc_gate_config = {
+                                "enabled": True,
+                                "ticker": g_ticker,
+                                "mode": btc_gate_ui["mode"],
+                                "step": btc_gate_ui["step"],
+                                "multi": btc_gate_ui["multi"],
+                                "n": btc_gate_ui.get("n", 3),
+                                "gate_series": (gate_state[open_col] == 1.0),
+                            }
+                            btc_gate_state_for_display = gate_state
+
+                # ---- BITCOIN SMA CROSS GATE (compute the daily signal once) ----
+                btc_sma_gate_config = {"enabled": False}
+                btc_sma_gate_state_for_display = None
+                if btc_sma_gate_ui.get("enabled"):
+                    sg_ticker = btc_sma_gate_ui["ticker"]
+                    if sg_ticker not in selected_fixed:
+                        st.warning(
+                            f"Bitcoin SMA cross gate is on, but {sg_ticker} is not in "
+                            f"the fixed basket, so the gate has no effect. Add "
+                            f"{sg_ticker} under Fixed Basket Assets to use the gate."
+                        )
+                    with st.spinner(f"Computing {sg_ticker} SMA cross gate..."):
+                        sma_gate_ohlc = download_gate_ohlc(
+                            sg_ticker, download_start, force_refresh=force_refresh
+                        )
+                    if sma_gate_ohlc is None or sma_gate_ohlc.empty:
+                        st.warning(
+                            f"Could not load price data for {sg_ticker}; the Bitcoin "
+                            f"SMA cross gate is disabled for this run."
+                        )
+                    else:
+                        sma_gate_state = compute_sma_cross_state(
+                            sma_gate_ohlc,
+                            sma_len=btc_sma_gate_ui["sma_len"],
+                            rf_len=btc_sma_gate_ui["rf_len"],
+                            rf_period=btc_sma_gate_ui["rf_period"],
+                        )
+                        sma_open_col = (
+                            "position" if btc_sma_gate_ui["mode"] == "position" else "trend"
+                        )
+                        if (
+                            sma_gate_state is None
+                            or sma_gate_state.empty
+                            or sma_open_col not in sma_gate_state.columns
+                            or sma_gate_state[sma_open_col].notna().sum() == 0
+                        ):
+                            st.warning(
+                                f"SMA cross gate signal could not be computed for "
+                                f"{sg_ticker} (not enough daily history for the "
+                                f"{btc_sma_gate_ui['sma_len']}-day SMA); gate disabled "
+                                f"for this run."
+                            )
+                        else:
+                            btc_sma_gate_config = {
+                                "enabled": True,
+                                "ticker": sg_ticker,
+                                "mode": btc_sma_gate_ui["mode"],
+                                "sma_len": btc_sma_gate_ui["sma_len"],
+                                "rf_len": btc_sma_gate_ui["rf_len"],
+                                "rf_period": btc_sma_gate_ui["rf_period"],
+                                "gate_series": (sma_gate_state[sma_open_col] == 1.0),
+                            }
+                            btc_sma_gate_state_for_display = sma_gate_state
+
                 params = {
                     "fixed_tickers": selected_fixed,
                     "equity_tickers": selected_equity,
@@ -2200,6 +3102,8 @@ if run_button:
                     "backtest_end": backtest_end,
                     "backfill_summary": backfill_summary,
                     "leverage_params": leverage_params_ui,
+                    "btc_gate": btc_gate_config,
+                    "btc_sma_gate": btc_sma_gate_config,
                 }
 
                 with st.spinner("Running backtest..."):
@@ -2384,11 +3288,13 @@ if run_button:
                     )
                     html_parts = [
                         '<style>',
-                        '.metrics-table { width: 100%; border-collapse: collapse; font-family: sans-serif; font-size: 14px; }',
-                        '.metrics-table th { text-align: left; padding: 8px 12px; border-bottom: 2px solid #ddd; background-color: #f8f9fa; }',
-                        '.metrics-table td { padding: 8px 12px; border-bottom: 1px solid #eee; }',
-                        '.metrics-table tr:hover { background-color: #f5f5f5; }',
-                        '.bold-row td { font-weight: 700; }',
+                        ".metrics-table { width: 100%; border-collapse: collapse; font-family: 'DM Sans', sans-serif; font-size: 14px; color: #484848; margin: 0.4rem 0 0.8rem 0; }",
+                        '.metrics-table thead th { text-align: right; padding: 11px 14px; border-bottom: 2px solid #3A0CA3; background-color: #fafafa; font-weight: 600; font-size: 13px; color: #484848; letter-spacing: 0.01em; }',
+                        '.metrics-table thead th:first-child { text-align: left; }',
+                        '.metrics-table tbody td { padding: 9px 14px; border-bottom: 1px solid #eeeeee; text-align: right; font-variant-numeric: tabular-nums; }',
+                        '.metrics-table tbody td:first-child { text-align: left; color: #666677; font-weight: 500; }',
+                        '.metrics-table tbody tr:hover { background-color: #f7f5fb; }',
+                        '.metrics-table .bold-row td { font-weight: 700; color: #484848; }',
                         '</style>',
                         '<table class="metrics-table">',
                         f'<thead><tr><th>Metric</th>{header_cells}</tr></thead>',
@@ -2500,6 +3406,67 @@ if run_button:
                                     )
                                 st.markdown("  \n".join(lev_parts))
 
+                        # Current Bitcoin gate signal
+                        if btc_gate_config.get("enabled"):
+                            g_ticker = btc_gate_config["ticker"]
+                            open_now = _gate_open_as_of(btc_gate_config, sig_date)
+                            emoji = "🟢" if open_now else "🔴"
+                            status_word = "in the market" if open_now else "out of the market"
+                            mode_word = (
+                                "long-position" if btc_gate_config["mode"] == "position"
+                                else "trend-up"
+                            )
+                            gate_line = (
+                                f"**Bitcoin gate ({mode_word}):** {emoji} {g_ticker} "
+                                f"{status_word}"
+                            )
+                            if btc_gate_state_for_display is not None:
+                                sub = btc_gate_state_for_display.loc[:sig_date]
+                                if len(sub) > 0:
+                                    last = sub.iloc[-1]
+                                    cl = last.get("close", np.nan)
+                                    bnd = last.get("band", np.nan)
+                                    if not (np.isnan(cl) or np.isnan(bnd)):
+                                        gate_line += (
+                                            f"  ·  close ${cl:,.0f} vs band ${bnd:,.0f}"
+                                        )
+                            if not open_now and g_ticker in signals.get("basket", []):
+                                pass  # gated-out ticker won't be in the basket
+                            elif not open_now:
+                                gate_line += "  (excluded from the basket)"
+                            st.markdown(gate_line)
+
+                        # Current Bitcoin SMA cross gate signal
+                        if btc_sma_gate_config.get("enabled"):
+                            sg_ticker = btc_sma_gate_config["ticker"]
+                            sma_open_now = _gate_open_as_of(btc_sma_gate_config, sig_date)
+                            sma_emoji = "🟢" if sma_open_now else "🔴"
+                            sma_status_word = (
+                                "in the market" if sma_open_now else "out of the market"
+                            )
+                            sma_mode_word = (
+                                "long-position" if btc_sma_gate_config["mode"] == "position"
+                                else "trend-up"
+                            )
+                            sma_gate_line = (
+                                f"**Bitcoin SMA cross gate ({sma_mode_word}):** "
+                                f"{sma_emoji} {sg_ticker} {sma_status_word}"
+                            )
+                            if btc_sma_gate_state_for_display is not None:
+                                sub = btc_sma_gate_state_for_display.loc[:sig_date]
+                                if len(sub) > 0:
+                                    last = sub.iloc[-1]
+                                    cl = last.get("close", np.nan)
+                                    sl = last.get("sma_long", np.nan)
+                                    if not (np.isnan(cl) or np.isnan(sl)):
+                                        sma_gate_line += (
+                                            f"  ·  close ${cl:,.0f} vs "
+                                            f"{btc_sma_gate_config['sma_len']}d SMA ${sl:,.0f}"
+                                        )
+                            if not sma_open_now and sg_ticker not in signals.get("basket", []):
+                                sma_gate_line += "  (excluded from the basket)"
+                            st.markdown(sma_gate_line)
+
                         # Details table
                         details = signals["asset_details"]
                         vol_months_label = f"{params['vol_months']}mo Vol (ann)"
@@ -2510,10 +3477,12 @@ if run_button:
 
                         sig_html = [
                             '<style>',
-                            '.sig-table { width: 100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; }',
-                            '.sig-table th { text-align: left; padding: 6px 10px; border-bottom: 2px solid #ddd; background-color: #f8f9fa; }',
-                            '.sig-table td { padding: 6px 10px; border-bottom: 1px solid #eee; }',
-                            '.sig-table tr:hover { background-color: #f5f5f5; }',
+                            ".sig-table { width: 100%; border-collapse: collapse; font-family: 'DM Sans', sans-serif; font-size: 13px; color: #484848; }",
+                            '.sig-table th { text-align: right; padding: 8px 11px; border-bottom: 2px solid #3A0CA3; background-color: #fafafa; font-weight: 600; color: #484848; }',
+                            '.sig-table th:first-child { text-align: left; }',
+                            '.sig-table td { padding: 7px 11px; border-bottom: 1px solid #eeeeee; text-align: right; font-variant-numeric: tabular-nums; }',
+                            '.sig-table td:first-child { text-align: left; color: #666677; }',
+                            '.sig-table tr:hover { background-color: #f7f5fb; }',
                             '.sig-selected { background-color: #F0EDF8; }',
                             '.sig-equity { font-style: italic; }',
                             '</style>',
@@ -2585,6 +3554,87 @@ if run_button:
                         sig_html.append('</tbody></table>')
                         st.markdown("\n".join(sig_html), unsafe_allow_html=True)
                         st.markdown("")
+
+                        # ---- EQUITY SUB-SELECTION RANKING ----
+                        # Equities are pre-filtered by a separate equity
+                        # momentum lookback before reaching the main basket.
+                        # This table shows that ranking so it is clear why an
+                        # equity ETF strong on the main lookback can still miss
+                        # the cut (it lost the equity-lookback contest).
+                        eq_details = signals.get("equity_details", [])
+                        if eq_details:
+                            eq_lbs = params["equity_lookbacks"]
+                            if len(eq_lbs) == 1:
+                                eq_desc = f"{eq_lbs[0]}-month"
+                            else:
+                                eq_desc = (
+                                    "/".join(str(l) for l in eq_lbs) + "-month blend"
+                                )
+                            eq_top_n = params["equity_top_n"]
+
+                            st.subheader("Equity Sub-Selection Ranking")
+                            st.caption(
+                                f"Equity ETFs ranked by the equity momentum "
+                                f"lookback ({eq_desc}). The top {eq_top_n} "
+                                f"advance into the main basket; the rest are "
+                                f"dropped before the main-lookback ranking "
+                                f"above is applied. This is why an ETF can rank "
+                                f"high above yet still not be an equity pick."
+                            )
+
+                            eq_lb_cols = sorted(set(eq_lbs))
+                            eq_lb_headers = [f"{lb}mo Return" for lb in eq_lb_cols]
+
+                            eq_html = [
+                                '<table class="sig-table">',
+                                '<thead><tr>',
+                                '<th>Asset</th>',
+                            ]
+                            for h in eq_lb_headers:
+                                eq_html.append(f'<th>{h}</th>')
+                            eq_html.append('<th>Blended</th>')
+                            eq_html.append(f'<th>{vol_months_label}</th>')
+                            eq_html.append('<th>Status</th>')
+                            eq_html.append('</tr></thead><tbody>')
+
+                            for row in eq_details:
+                                is_pick = row.get("Equity Pick")
+                                class_str = ' class="sig-selected"' if is_pick else ""
+                                eq_html.append(f'<tr{class_str}>')
+
+                                eq_html.append(
+                                    f'<td><strong>{row["Asset"]}</strong></td>'
+                                )
+
+                                for h in eq_lb_headers:
+                                    val = row.get(h, np.nan)
+                                    if isinstance(val, (int, float)) and not np.isnan(val):
+                                        eq_html.append(f'<td>{val:.2%}</td>')
+                                    else:
+                                        eq_html.append('<td>-</td>')
+
+                                blended = row.get("Blended Score", np.nan)
+                                if isinstance(blended, (int, float)) and not np.isnan(blended):
+                                    eq_html.append(f'<td><strong>{blended:.2%}</strong></td>')
+                                else:
+                                    eq_html.append('<td>-</td>')
+
+                                vol = row.get(vol_months_label, np.nan)
+                                if isinstance(vol, (int, float)) and not np.isnan(vol):
+                                    eq_html.append(f'<td>{vol:.2%}</td>')
+                                else:
+                                    eq_html.append('<td>-</td>')
+
+                                if is_pick:
+                                    eq_html.append('<td>PICK</td>')
+                                else:
+                                    eq_html.append('<td>dropped</td>')
+
+                                eq_html.append('</tr>')
+
+                            eq_html.append('</tbody></table>')
+                            st.markdown("\n".join(eq_html), unsafe_allow_html=True)
+                            st.markdown("")
 
                     # ---- CHARTS ----
                     st.subheader("Equity Curve and Drawdown")
@@ -2718,6 +3768,27 @@ if run_button:
                                     f"**Leverage:** {lp['ticker']} {lp['long_sma']}/{lp['short_sma']}d SMA, "
                                     f"on={lp['mult_risk_on']:.2f}x / off={lp['mult_risk_off']:.2f}x"
                                 )
+                        if btc_gate_config.get("enabled"):
+                            bg_mode = (
+                                "long-position" if btc_gate_config["mode"] == "position"
+                                else "trend-up"
+                            )
+                            st.markdown(
+                                f"**BTC gate:** {btc_gate_config['ticker']} Radius Trend "
+                                f"({bg_mode}), step {btc_gate_config['step']:.3f}, "
+                                f"dist {btc_gate_config['multi']:.2f}"
+                            )
+                        if btc_sma_gate_config.get("enabled"):
+                            sg_mode = (
+                                "long-position" if btc_sma_gate_config["mode"] == "position"
+                                else "trend-up"
+                            )
+                            st.markdown(
+                                f"**BTC SMA gate:** {btc_sma_gate_config['ticker']} SMA cross "
+                                f"({sg_mode}), SMA {btc_sma_gate_config['sma_len']}d, "
+                                f"rf {btc_sma_gate_config['rf_len']}d/"
+                                f"{btc_sma_gate_config['rf_period']}d"
+                            )
 
                     # ---- BACKFILL DETAILS & DATA NOTES (at end of dashboard) ----
                     if backfill_info:
@@ -2750,11 +3821,43 @@ if run_button:
                                 f"({lp['mult_risk_off']:.2f}x to {lp['mult_risk_on']:.2f}x) "
                                 f"based on {lp['ticker']} trend regime."
                             )
+                    gate_note = ""
+                    if btc_gate_config.get("enabled"):
+                        bg_mode = (
+                            "long-position state" if btc_gate_config["mode"] == "position"
+                            else "trend-up state"
+                        )
+                        gate_note = (
+                            f" Bitcoin trend gate: {btc_gate_config['ticker']} is only "
+                            f"eligible for the basket when its Radius Trend "
+                            f"{bg_mode} is in the market (Radius Step "
+                            f"{btc_gate_config['step']:.3f}, Start Points Distance "
+                            f"{btc_gate_config['multi']:.2f}, computed on daily bars). "
+                            f"This is a close approximation of the TradingView "
+                            f"indicator and may differ slightly due to data-feed alignment."
+                        )
+                    sma_gate_note = ""
+                    if btc_sma_gate_config.get("enabled"):
+                        sg_mode = (
+                            "long-position state" if btc_sma_gate_config["mode"] == "position"
+                            else "trend-up state"
+                        )
+                        sma_gate_note = (
+                            f" Bitcoin SMA cross gate: {btc_sma_gate_config['ticker']} is "
+                            f"only eligible for the basket when its SMA cross "
+                            f"{sg_mode} is in the market ({btc_sma_gate_config['sma_len']}-day "
+                            f"long SMA, {btc_sma_gate_config['rf_len']}-day rising/falling SMA "
+                            f"over {btc_sma_gate_config['rf_period']} bars, computed on daily "
+                            f"bars as a conversion of the original 8-hour strategy). When both "
+                            f"Bitcoin gates are enabled, the ticker must pass both."
+                        )
                     st.caption(
                         "All prices are dividend- and split-adjusted (total return). "
                         "Signals computed at month-end close; trades execute at next trading day's close (1-day lag). "
                         "Sortino ratio uses BIL as the risk-free rate."
                         + lev_note
+                        + gate_note
+                        + sma_gate_note
                     )
 
 else:

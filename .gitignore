@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.pyc
+
+# Cache
+price_cache/
+
+# Backups
+*.backup
+*.bak
+
+# Excel workbooks
+*.xlsx
+
+# Images and PDFs
+*.png
+*.pdf
+
+# Batch files
+*.bat
+
+# Other scripts not part of the dashboard
+Config Validation*.py
+Parameter Sweep*.py
+BTC Gate Test.py
+Build Synthetic QCI.py
+Generate Gold Backfill.py
+
+# Extra CSVs not in repo
+BCOM Daily Prices.csv
+BCOMEN Daily Prices.csv
+WTI Daily Prices.csv
+
+# Extra text/markdown files
+Dashboard Development Context.md
+Previous Claude Recommended Config.md
+Strategy Parameter Selection Memo.md
+Synthetic QCI Validation Stats.txt
+Radius Trend Strategy Pinescript v5 for BTC.txt
+Simple SMA Cross Stratey - 8H BTC.txt
+
+# Screenshot folders
+with BTC*/
+without BTC*/
