@@ -24,6 +24,7 @@ backfill sources. These are never sent to Yahoo Finance.
 """
 
 import warnings
+
 warnings.filterwarnings("ignore")
 
 import streamlit as st
@@ -994,9 +995,17 @@ def run_backtest(daily_prices, monthly_prices, params):
     """
     Run the adaptive portfolio backtest with the given parameters.
 
-    Execution timing: signals are computed from month-end closing prices.
-    Trades execute at the NEXT trading day's close (1-day lag) to avoid
-    look-ahead bias from same-day signal + execution.
+    Execution timing (params["exec_timing"]):
+      "last_day"  (default) - allocations (momentum, gates, risk parity,
+                  leverage) are computed from data through the close of the
+                  trading day BEFORE the last trading day of the month, and
+                  trades execute at the last trading day's close. This
+                  mirrors real-world execution: take the signal from the
+                  penultimate close, enter positions near the close on the
+                  final trading day. No look-ahead.
+      "first_day" - signals are computed from month-end closing prices and
+                  trades execute at the NEXT trading day's close (1-day
+                  lag). This is the legacy behavior.
     """
     fixed_tickers = params["fixed_tickers"]
     equity_tickers = params["equity_tickers"]
@@ -1010,6 +1019,7 @@ def run_backtest(daily_prices, monthly_prices, params):
     backtest_start = params["backtest_start"]
     backtest_end = params.get("backtest_end", "")
     leverage_params = params.get("leverage_params", {"enabled": False})
+    exec_timing = params.get("exec_timing", "last_day")
 
     # Bitcoin trend gate (Radius Trend). When enabled, the gated ticker is
     # only admitted to the basket on months when its trend signal is "in".
@@ -1036,6 +1046,26 @@ def run_backtest(daily_prices, monthly_prices, params):
             return None
         return future[0]
 
+    def last_trading_day(date):
+        """Return the last trading day AT OR BEFORE the given date."""
+        past = all_trading_dates[all_trading_dates <= date]
+        if len(past) == 0:
+            return None
+        return past[-1]
+
+    def resolve_exec_date(month_end_date):
+        """Map a calendar month-end label to its execution trading day."""
+        if exec_timing == "first_day":
+            return next_trading_day(month_end_date)
+        # "last_day": execute at the close of the final trading day of the
+        # month. Skip incomplete months (label beyond the latest data).
+        if month_end_date > all_trading_dates[-1] and month_end_date.month == all_trading_dates[-1].month and month_end_date.year == all_trading_dates[-1].year:
+            return None
+        return last_trading_day(month_end_date)
+
+    # Forward-filled daily prices for signal-date lookups (computed once)
+    daily_ffill = daily_prices.ffill()
+
     results = []
     trade_log = []
     daily_portfolio_values = {}  # {date: portfolio_value} for daily drawdown
@@ -1047,6 +1077,33 @@ def run_backtest(daily_prices, monthly_prices, params):
 
         next_month_end = valid_months[i + 1]
 
+        # Execution day for this rebalance (needed up front so the signal
+        # cutoff can be derived from it in "last_day" mode).
+        exec_date_entry = resolve_exec_date(rebal_date)
+        if exec_date_entry is None:
+            continue
+
+        # Signal cutoff: the last date whose data may inform this
+        # rebalance's allocations.
+        #   "last_day"  -> the day before the execution day (penultimate
+        #                  trading day's close). No look-ahead.
+        #   "first_day" -> the month-end itself (execution is the next
+        #                  trading day, so there is already a 1-day lag).
+        if exec_timing == "last_day":
+            signal_date = exec_date_entry - pd.Timedelta(days=1)
+        else:
+            signal_date = rebal_date
+
+        def signal_monthly_frame(cols):
+            """Monthly closes through rebal_date, with the current month's
+            value replaced by the close as of signal_date (last_day mode)."""
+            frame = monthly_prices[cols].loc[:rebal_date].copy()
+            if exec_timing == "last_day" and len(frame) > 0:
+                asof = daily_ffill[cols].loc[:signal_date]
+                if len(asof) > 0:
+                    frame.iloc[-1] = asof.iloc[-1]
+            return frame
+
         # Build basket
         basket = []
 
@@ -1056,11 +1113,11 @@ def run_backtest(daily_prices, monthly_prices, params):
                 if len(ps) > min_lookback:
                     # Bitcoin trend gate: skip the gated ticker on months
                     # when its Radius Trend signal is "out".
-                    if t == btc_gate_ticker and not _gate_open_as_of(btc_gate, rebal_date):
+                    if t == btc_gate_ticker and not _gate_open_as_of(btc_gate, signal_date):
                         continue
                     # Bitcoin SMA cross gate: skip the gated ticker on months
                     # when its SMA cross signal is "out".
-                    if t == btc_sma_gate_ticker and not _gate_open_as_of(btc_sma_gate, rebal_date):
+                    if t == btc_sma_gate_ticker and not _gate_open_as_of(btc_sma_gate, signal_date):
                         continue
                     basket.append(t)
 
@@ -1076,7 +1133,7 @@ def run_backtest(daily_prices, monthly_prices, params):
                         eq_available.append(t)
 
             if len(eq_available) >= equity_top_n:
-                eq_subset = monthly_prices[eq_available].loc[:rebal_date]
+                eq_subset = signal_monthly_frame(eq_available)
                 eq_mom = compute_blended_momentum(eq_subset, equity_lookbacks, equity_lookback_weights)
                 latest_eq = eq_mom.iloc[-1].dropna().sort_values(ascending=False)
                 selected_equities = latest_eq.head(equity_top_n).index.tolist()
@@ -1086,7 +1143,7 @@ def run_backtest(daily_prices, monthly_prices, params):
         if len(basket) == 0:
             continue
 
-        basket_monthly = monthly_prices[basket].loc[:rebal_date].copy()
+        basket_monthly = signal_monthly_frame(basket)
         basket_daily = daily_prices[basket].copy()
 
         basket_mom = compute_blended_momentum(basket_monthly, main_lookbacks, main_lookback_weights)
@@ -1099,15 +1156,15 @@ def run_backtest(daily_prices, monthly_prices, params):
             continue
 
         weights = compute_risk_parity_weights(
-            basket_daily, final_holdings, rebal_date, vol_months
+            basket_daily, final_holdings, signal_date, vol_months
         )
 
-        # Execution prices: use the next trading day AFTER each month-end
-        # to model realistic 1-day execution lag
-        exec_date_entry = next_trading_day(rebal_date)
-        exec_date_exit = next_trading_day(next_month_end)
+        # Exit execution day (entry was resolved at the top of the loop):
+        #   "last_day"  -> close of the final trading day of the month
+        #   "first_day" -> close of the next trading day after month-end
+        exec_date_exit = resolve_exec_date(next_month_end)
 
-        if exec_date_entry is None or exec_date_exit is None:
+        if exec_date_exit is None:
             continue
 
         port_return = 0.0
@@ -1134,7 +1191,7 @@ def run_backtest(daily_prices, monthly_prices, params):
 
         # --- Dynamic leverage ---
         lev_mult, lev_regime, lev_detail = compute_leverage_signal(
-            daily_prices, rebal_date, leverage_params,
+            daily_prices, signal_date, leverage_params,
             final_holdings=final_holdings
         )
         port_return_raw = port_return
@@ -1206,7 +1263,7 @@ def run_backtest(daily_prices, monthly_prices, params):
         ) <= min_lookback:
             btc_gate_status = "n/a"
         else:
-            btc_gate_status = "in" if _gate_open_as_of(btc_gate, rebal_date) else "out"
+            btc_gate_status = "in" if _gate_open_as_of(btc_gate, signal_date) else "out"
 
         # Bitcoin SMA cross gate status for this month (for the trade log)
         if btc_sma_gate_ticker is None:
@@ -1216,10 +1273,11 @@ def run_backtest(daily_prices, monthly_prices, params):
         ) <= min_lookback:
             btc_sma_gate_status = "n/a"
         else:
-            btc_sma_gate_status = "in" if _gate_open_as_of(btc_sma_gate, rebal_date) else "out"
+            btc_sma_gate_status = "in" if _gate_open_as_of(btc_sma_gate, signal_date) else "out"
 
         trade_log.append({
             "rebal_date": rebal_date.strftime("%Y-%m-%d"),
+            "signal_date": signal_date.strftime("%Y-%m-%d"),
             "hold_month": next_month_end.strftime("%Y-%m"),
             "exec_entry": exec_date_entry.strftime("%Y-%m-%d"),
             "exec_exit": exec_date_exit.strftime("%Y-%m-%d") if i < len(valid_months) - 2 else "",
@@ -1710,6 +1768,7 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
         "Main Lookback": params["main_lookback_label"],
         "Final Top N": params["final_top_n"],
         "Vol Window (months)": params["vol_months"],
+        "Execution": params.get("exec_timing_label", params.get("exec_timing", "last_day")),
         "Leverage": lev_summary,
         "BTC Gate": bg_summary,
         "BTC SMA Gate": sg_summary,
@@ -2298,6 +2357,26 @@ final_top_n = st.sidebar.radio(
     index=1,
     horizontal=True,
 )
+
+EXEC_TIMING_OPTIONS = {
+    "Last trading day of month (at close)": "last_day",
+    "First trading day of next month (at close)": "first_day",
+}
+exec_timing_label = st.sidebar.selectbox(
+    "Trade execution timing",
+    options=list(EXEC_TIMING_OPTIONS.keys()),
+    index=0,
+    help=(
+        "Last trading day: allocations are computed from the close of the "
+        "trading day BEFORE the last trading day of the month, and trades "
+        "execute at the last trading day's close. Matches real-world "
+        "execution (signal from the penultimate close, enter near the "
+        "final close) with no look-ahead. "
+        "First trading day: signals use the month-end close and trades "
+        "execute at the next trading day's close (1-day lag)."
+    ),
+)
+exec_timing = EXEC_TIMING_OPTIONS[exec_timing_label]
 
 vol_months = st.sidebar.slider(
     "Risk parity volatility window (months)",
@@ -3098,6 +3177,8 @@ if run_button:
                     "main_lookback_label": main_lookback_label,
                     "final_top_n": final_top_n,
                     "vol_months": vol_months,
+                    "exec_timing": exec_timing,
+                    "exec_timing_label": exec_timing_label,
                     "backtest_start": backtest_start,
                     "backtest_end": backtest_end,
                     "backfill_summary": backfill_summary,
@@ -3851,9 +3932,20 @@ if run_button:
                             f"bars as a conversion of the original 8-hour strategy). When both "
                             f"Bitcoin gates are enabled, the ticker must pass both."
                         )
+                    if exec_timing == "last_day":
+                        exec_note = (
+                            "Allocations computed from the close of the trading day before "
+                            "the last trading day of each month; trades execute at the last "
+                            "trading day's close (no look-ahead). "
+                        )
+                    else:
+                        exec_note = (
+                            "Signals computed at month-end close; trades execute at next "
+                            "trading day's close (1-day lag). "
+                        )
                     st.caption(
                         "All prices are dividend- and split-adjusted (total return). "
-                        "Signals computed at month-end close; trades execute at next trading day's close (1-day lag). "
+                        + exec_note +
                         "Sortino ratio uses BIL as the risk-free rate."
                         + lev_note
                         + gate_note
