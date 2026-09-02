@@ -179,7 +179,15 @@ DEFAULT_FIXED_ASSETS = {
     "BIL":     "Cash (1-3 Month T-Bill)",
     "BTAL":    "Defensive Equity Factor",
     "HGER":    "Commodity (All-Weather)",
-    "BTC-USD": "Bitcoin",
+    "IBIT":    "Bitcoin (Spot ETF)",
+    "BTC-USD": "Bitcoin (Spot Price)",
+}
+
+# Expense-ratio drag applied to a backfilled (synthetic) segment, by primary
+# ticker. Only needed where the backfill source is the underlying asset
+# itself, so the synthetic era would otherwise carry no fund fees.
+BACKFILL_FEE_ANNUAL = {
+    "IBIT": 0.0025,   # iShares Bitcoin Trust, 0.25%/yr
 }
 
 DEFAULT_EQUITY_ETFS = {
@@ -447,9 +455,18 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
     if yahoo_cols:
         yahoo_result = result[yahoo_cols]
         if not cached.empty and not force_refresh:
+            # Union the indexes first. A plain `cached[col] = ...` aligns on
+            # the cached index only, so newly downloaded dates were silently
+            # dropped and the cache never advanced past its original last
+            # date -- forcing a full delta re-download on every launch.
+            merged = cached.reindex(cached.index.union(yahoo_result.index))
             for col in yahoo_result.columns:
-                cached[col] = yahoo_result[col]
-            save_price_cache(cached.sort_index())
+                incoming = yahoo_result[col].reindex(merged.index)
+                if col in cached.columns:
+                    merged[col] = incoming.combine_first(merged[col])
+                else:
+                    merged[col] = incoming
+            save_price_cache(merged.sort_index())
         else:
             save_price_cache(yahoo_result)
 
@@ -459,7 +476,61 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
     return result[available]
 
 
-def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers):
+_LOCAL_INDEX_COLS = None
+
+
+def _local_index_columns():
+    """Column names sourced from local '<TICKER> Daily Prices.csv' files."""
+    global _LOCAL_INDEX_COLS
+    if _LOCAL_INDEX_COLS is None:
+        try:
+            _LOCAL_INDEX_COLS = set(load_local_index_data().columns)
+        except Exception:
+            _LOCAL_INDEX_COLS = set()
+    return _LOCAL_INDEX_COLS
+
+
+def market_trading_dates(daily_prices):
+    """
+    The exchange trading calendar implied by daily_prices.
+
+    daily_prices may contain 24/7 assets (BTC-USD and other "-USD" pairs),
+    which carry bars on weekends and market holidays. Treating the raw
+    index as a trading calendar puts execution dates on days the ETFs did
+    not trade -- roughly one month in four, since ~28% of calendar
+    month-ends fall on a Saturday or Sunday.
+
+    Local index CSVs (GOLD, BAB, WTI) are synthetic 7-day series and are
+    excluded for the same reason -- they are not exchange-listed and would
+    otherwise vote weekend dates into the calendar.
+
+    Build the calendar from the remaining columns: every weekday on which
+    at least one exchange-listed ticker printed a close. Falls back to the
+    full index if nothing qualifies.
+    """
+    if daily_prices.empty:
+        return daily_prices.index
+
+    market_cols = [
+        c for c in daily_prices.columns
+        if not str(c).upper().endswith("-USD")
+        and c not in _local_index_columns()
+    ]
+    if not market_cols:
+        return daily_prices.index.sort_values()
+
+    valid = daily_prices[market_cols].dropna(how="all")
+    if valid.empty:
+        return daily_prices.index.sort_values()
+
+    # Hard guard: no US exchange trades on a Saturday or Sunday, whatever
+    # a data file claims.
+    idx = valid.index
+    return idx[idx.dayofweek < 5].sort_values()
+
+
+def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers,
+                            fee_annual=0.0):
     """
     Build a single price series for primary_ticker, extending it backward
     using backfill tickers (in priority order) where the primary has no data.
@@ -468,8 +539,21 @@ def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers):
     backfill ETF and chain them onto the primary's earliest known price,
     so the price levels connect smoothly.
 
+    fee_annual applies an expense-ratio drag to the synthetic (backfilled)
+    segment only. Use it when the primary is an ETF and the backfill source
+    is the underlying asset itself -- e.g. IBIT backfilled with BTC-USD.
+    The primary's own history already has its fees baked into price, so
+    without this the synthetic era would look better than the ETF era.
+
+    The synthetic segment is also masked to the exchange calendar whenever
+    the primary is not itself a 24/7 asset. A 24/7 backfill source such as
+    BTC-USD would otherwise hand the ETF weekend closes it could never have
+    printed, and would put weekend dates back into the trading calendar.
+
     Returns the spliced series and a list of segment descriptions.
     """
+    is_crypto_primary = str(primary_ticker).upper().endswith("-USD")
+    calendar = None if is_crypto_primary else market_trading_dates(daily_prices)
     if primary_ticker in daily_prices.columns:
         primary = daily_prices[primary_ticker].copy()
     else:
@@ -515,8 +599,19 @@ def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers):
         scale_factor = anchor_price / bf_last_price
         bf_scaled = bf_before * scale_factor
 
+        # Expense-ratio drag on the synthetic segment. Anchored at the
+        # primary's first real price and worked backwards, so a fee makes
+        # the synthetic series start HIGHER and grow more slowly.
+        if fee_annual and fee_annual > 0:
+            yrs = (earliest_combined - bf_scaled.index).days / 365.25
+            bf_scaled = bf_scaled / ((1.0 - fee_annual) ** yrs)
+
         # Fill in the earlier dates (exclude the overlap date itself)
         fill_dates = bf_scaled.index[bf_scaled.index < earliest_combined]
+        if calendar is not None:
+            fill_dates = fill_dates.intersection(calendar)
+        if len(fill_dates) == 0:
+            continue
         combined.loc[fill_dates] = bf_scaled.loc[fill_dates]
 
         segments.insert(0, (bf_ticker, fill_dates.min(), fill_dates.max()))
@@ -973,6 +1068,26 @@ def compute_sma_cross_state(ohlc, sma_len=150, rf_len=20, rf_period=20):
     return out
 
 
+def gate_signal_ticker(gate):
+    """
+    The ticker whose price the gate's trend signal is computed FROM.
+
+    Distinct from gate["ticker"], which is the basket asset the gate
+    admits or excludes. They differ when the tradable instrument is a
+    wrapper around the real asset: hold IBIT, but read the trend from
+    BTC-USD, which has a decade more history and trades every day of the
+    week. Falls back to the gated ticker so older configs still work.
+    """
+    return gate.get("signal_ticker") or gate.get("ticker")
+
+
+def gate_label(gate):
+    """'IBIT (signal: BTC-USD)', or just 'IBIT' when they are the same."""
+    held = gate.get("ticker")
+    src = gate_signal_ticker(gate)
+    return held if src == held else f"{held} (signal: {src})"
+
+
 def _gate_open_as_of(btc_gate, as_of_date):
     """
     Return True if the Bitcoin trend gate is open as of `as_of_date`.
@@ -1036,8 +1151,11 @@ def run_backtest(daily_prices, monthly_prices, params):
     min_lookback = max(main_lookbacks)
     valid_months = monthly_prices.index[min_lookback:]
 
-    # Build sorted array of all trading dates for execution-day lookups
-    all_trading_dates = daily_prices.index.sort_values()
+    # Build sorted array of all trading dates for execution-day lookups.
+    # Anchored to the exchange calendar, NOT daily_prices.index -- BTC-USD
+    # weekend bars would otherwise place month-end executions on Saturdays
+    # and Sundays.
+    all_trading_dates = market_trading_dates(daily_prices)
 
     def next_trading_day(date):
         """Return the first trading day strictly AFTER the given date."""
@@ -1532,6 +1650,28 @@ def compute_equity_subselection_details(daily_prices, monthly_prices_local,
     return rows
 
 
+def last_market_date(daily_prices):
+    """
+    Most recent date on which the traditional-market assets actually traded.
+
+    daily_prices may contain 24/7 assets (BTC-USD and other "-USD" pairs).
+    Those carry bars on weekends and market holidays, and Yahoo publishes
+    the current UTC day's bar as soon as the UTC date rolls over, which is
+    6:00 p.m. the previous day in Mountain time. Anchoring the live signal
+    to daily_prices.index.max() therefore stamps it with a date that has
+    not happened yet locally and on which no ETF has traded.
+
+    Anchor to the exchange calendar instead: the last date carrying data
+    for at least one non-crypto ticker.
+    """
+    if daily_prices.empty:
+        return None
+    dates = market_trading_dates(daily_prices)
+    if len(dates) == 0:
+        return None
+    return dates.max()
+
+
 def compute_current_signals(daily_prices, monthly_prices, params):
     """
     Compute model signals for the most recent available trading date.
@@ -1556,7 +1696,9 @@ def compute_current_signals(daily_prices, monthly_prices, params):
     # only have data through 2026-04-28). The bin already contains the
     # most recent close (forward-filled), so we just relabel its index to
     # last_daily so all date-based slicing matches the actual data window.
-    last_daily = daily_prices.index.max()
+    last_daily = last_market_date(daily_prices)
+    if last_daily is None:
+        return None
     candidate = monthly_prices.index[-1]
     if candidate > last_daily:
         new_index = list(monthly_prices.index[:-1]) + [last_daily]
@@ -1741,7 +1883,7 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
     if bg.get("enabled"):
         bg_mode = "long-position" if bg.get("mode") == "position" else "trend-up"
         bg_summary = (
-            f"{bg.get('ticker', 'BTC-USD')} Radius Trend ({bg_mode}), "
+            f"{gate_label(bg)} Radius Trend ({bg_mode}), "
             f"step={bg.get('step', 0.15)}, dist={bg.get('multi', 0.5)}"
         )
     else:
@@ -1751,7 +1893,7 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
     if sg.get("enabled"):
         sg_mode = "long-position" if sg.get("mode") == "position" else "trend-up"
         sg_summary = (
-            f"{sg.get('ticker', 'BTC-USD')} SMA cross ({sg_mode}), "
+            f"{gate_label(sg)} SMA cross ({sg_mode}), "
             f"SMA={sg.get('sma_len', 150)}, rf_len={sg.get('rf_len', 20)}, "
             f"rf_period={sg.get('rf_period', 20)}"
         )
@@ -2592,11 +2734,24 @@ with st.sidebar.expander("Bitcoin Trend Gate", expanded=False):
 
     if btc_gate_on:
         btc_gate_ticker_ui = st.text_input(
-            "Gate ticker",
-            value="BTC-USD",
+            "Gated asset (held in the basket)",
+            value="IBIT",
             key="btc_gate_ticker",
-            help="The fixed-basket asset this gate controls. Defaults to BTC-USD.",
+            help="The fixed-basket asset this gate admits or excludes. This "
+                 "must match a ticker you actually hold, e.g. IBIT.",
         ).strip().upper()
+
+        btc_gate_signal_ui = st.text_input(
+            "Signal source",
+            value="BTC-USD",
+            key="btc_gate_signal_ticker",
+            help="The ticker the trend is computed FROM. Leave as BTC-USD "
+                 "when holding a Bitcoin ETF: spot BTC has a decade more "
+                 "history and trades 7 days a week, so the trend signal is "
+                 "far better conditioned than the ETF's short weekday-only "
+                 "series. Set it equal to the gated asset to read the trend "
+                 "off the ETF instead.",
+        ).strip().upper() or btc_gate_ticker_ui
 
         btc_gate_mode_label = st.selectbox(
             "Gate rule",
@@ -2647,6 +2802,7 @@ with st.sidebar.expander("Bitcoin Trend Gate", expanded=False):
         btc_gate_ui = {
             "enabled": True,
             "ticker": btc_gate_ticker_ui,
+            "signal_ticker": btc_gate_signal_ui,
             "mode": btc_gate_mode,
             "step": float(btc_gate_step),
             "multi": float(btc_gate_multi),
@@ -2674,11 +2830,21 @@ with st.sidebar.expander("Bitcoin SMA Cross Gate", expanded=False):
 
     if btc_sma_gate_on:
         btc_sma_gate_ticker_ui = st.text_input(
-            "Gate ticker",
-            value="BTC-USD",
+            "Gated asset (held in the basket)",
+            value="IBIT",
             key="btc_sma_gate_ticker",
-            help="The fixed-basket asset this gate controls. Defaults to BTC-USD.",
+            help="The fixed-basket asset this gate admits or excludes. This "
+                 "must match a ticker you actually hold, e.g. IBIT.",
         ).strip().upper()
+
+        btc_sma_gate_signal_ui = st.text_input(
+            "Signal source",
+            value="BTC-USD",
+            key="btc_sma_gate_signal_ticker",
+            help="The ticker the SMA cross is computed FROM. Leave as BTC-USD "
+                 "when holding a Bitcoin ETF: the 150-day SMA needs long "
+                 "history, and IBIT only starts in January 2024.",
+        ).strip().upper() or btc_sma_gate_ticker_ui
 
         btc_sma_gate_mode_label = st.selectbox(
             "Gate rule",
@@ -2752,6 +2918,7 @@ with st.sidebar.expander("Bitcoin SMA Cross Gate", expanded=False):
         btc_sma_gate_ui = {
             "enabled": True,
             "ticker": btc_sma_gate_ticker_ui,
+            "signal_ticker": btc_sma_gate_signal_ui,
             "mode": btc_sma_gate_mode,
             "sma_len": int(btc_sma_long_len),
             "rf_len": int(btc_sma_fast_len),
@@ -2790,7 +2957,7 @@ except (ValueError, IndexError):
 # ---- FIXED BASKET (fourth, collapsible) ----
 st.sidebar.markdown("---")
 
-default_fixed = ["TLT", "GLD", "BIL", "BTAL", "HGER"]
+default_fixed = ["TLT", "GLD", "BIL", "BTAL", "HGER", "IBIT"]
 selected_fixed = []
 with st.sidebar.expander("Fixed Basket Assets", expanded=False):
     st.caption("Toggle built-in assets and/or add custom tickers below.")
@@ -2864,7 +3031,7 @@ BACKFILL_DEFAULTS = [
     ("IWM",     "OTCFX"),
     ("EMXC",    "EEM, VEIEX"),
     ("DXJ",     "FJPNX"),
-    ("",        ""),
+    ("IBIT",    "BTC-USD"),
     ("",        ""),
     ("",        ""),
 ]
@@ -2992,7 +3159,10 @@ if run_button:
             backfill_info = []
             for primary, chain in backfill_rules.items():
                 if primary in daily_prices.columns or any(bf in daily_prices.columns for bf in chain):
-                    spliced, segments = build_backfilled_series(daily_prices, primary, chain)
+                    spliced, segments = build_backfilled_series(
+                        daily_prices, primary, chain,
+                        fee_annual=BACKFILL_FEE_ANNUAL.get(primary, 0.0),
+                    )
                     daily_prices[primary] = spliced
                     for seg_ticker, seg_start, seg_end in segments:
                         backfill_info.append({
@@ -3071,19 +3241,21 @@ if run_button:
                 btc_gate_state_for_display = None
                 if btc_gate_ui.get("enabled"):
                     g_ticker = btc_gate_ui["ticker"]
+                    g_signal = gate_signal_ticker(btc_gate_ui)
                     if g_ticker not in selected_fixed:
                         st.warning(
                             f"Bitcoin trend gate is on, but {g_ticker} is not in the "
-                            f"fixed basket, so the gate has no effect. Add {g_ticker} "
-                            f"under Fixed Basket Assets to use the gate."
+                            f"fixed basket, so the gate has no effect. Set the gated "
+                            f"asset to a ticker you hold (e.g. IBIT), or add "
+                            f"{g_ticker} under Fixed Basket Assets."
                         )
-                    with st.spinner(f"Computing {g_ticker} trend gate..."):
+                    with st.spinner(f"Computing {g_signal} trend gate..."):
                         gate_ohlc = download_gate_ohlc(
-                            g_ticker, download_start, force_refresh=force_refresh
+                            g_signal, download_start, force_refresh=force_refresh
                         )
                     if gate_ohlc is None or gate_ohlc.empty:
                         st.warning(
-                            f"Could not load OHLC data for {g_ticker}; the Bitcoin "
+                            f"Could not load OHLC data for {g_signal}; the Bitcoin "
                             f"trend gate is disabled for this run."
                         )
                     else:
@@ -3097,12 +3269,13 @@ if run_button:
                         if gate_state is None or gate_state.empty or open_col not in gate_state.columns:
                             st.warning(
                                 f"Trend gate signal could not be computed for "
-                                f"{g_ticker}; gate disabled for this run."
+                                f"{g_signal}; gate disabled for this run."
                             )
                         else:
                             btc_gate_config = {
                                 "enabled": True,
                                 "ticker": g_ticker,
+                                "signal_ticker": g_signal,
                                 "mode": btc_gate_ui["mode"],
                                 "step": btc_gate_ui["step"],
                                 "multi": btc_gate_ui["multi"],
@@ -3116,19 +3289,21 @@ if run_button:
                 btc_sma_gate_state_for_display = None
                 if btc_sma_gate_ui.get("enabled"):
                     sg_ticker = btc_sma_gate_ui["ticker"]
+                    sg_signal = gate_signal_ticker(btc_sma_gate_ui)
                     if sg_ticker not in selected_fixed:
                         st.warning(
                             f"Bitcoin SMA cross gate is on, but {sg_ticker} is not in "
-                            f"the fixed basket, so the gate has no effect. Add "
-                            f"{sg_ticker} under Fixed Basket Assets to use the gate."
+                            f"the fixed basket, so the gate has no effect. Set the "
+                            f"gated asset to a ticker you hold (e.g. IBIT), or add "
+                            f"{sg_ticker} under Fixed Basket Assets."
                         )
-                    with st.spinner(f"Computing {sg_ticker} SMA cross gate..."):
+                    with st.spinner(f"Computing {sg_signal} SMA cross gate..."):
                         sma_gate_ohlc = download_gate_ohlc(
-                            sg_ticker, download_start, force_refresh=force_refresh
+                            sg_signal, download_start, force_refresh=force_refresh
                         )
                     if sma_gate_ohlc is None or sma_gate_ohlc.empty:
                         st.warning(
-                            f"Could not load price data for {sg_ticker}; the Bitcoin "
+                            f"Could not load price data for {sg_signal}; the Bitcoin "
                             f"SMA cross gate is disabled for this run."
                         )
                     else:
@@ -3149,7 +3324,7 @@ if run_button:
                         ):
                             st.warning(
                                 f"SMA cross gate signal could not be computed for "
-                                f"{sg_ticker} (not enough daily history for the "
+                                f"{sg_signal} (not enough daily history for the "
                                 f"{btc_sma_gate_ui['sma_len']}-day SMA); gate disabled "
                                 f"for this run."
                             )
@@ -3157,6 +3332,7 @@ if run_button:
                             btc_sma_gate_config = {
                                 "enabled": True,
                                 "ticker": sg_ticker,
+                                "signal_ticker": sg_signal,
                                 "mode": btc_sma_gate_ui["mode"],
                                 "sma_len": btc_sma_gate_ui["sma_len"],
                                 "rf_len": btc_sma_gate_ui["rf_len"],
@@ -3489,7 +3665,7 @@ if run_button:
 
                         # Current Bitcoin gate signal
                         if btc_gate_config.get("enabled"):
-                            g_ticker = btc_gate_config["ticker"]
+                            g_ticker = gate_label(btc_gate_config)
                             open_now = _gate_open_as_of(btc_gate_config, sig_date)
                             emoji = "🟢" if open_now else "🔴"
                             status_word = "in the market" if open_now else "out of the market"
@@ -3511,7 +3687,7 @@ if run_button:
                                         gate_line += (
                                             f"  ·  close ${cl:,.0f} vs band ${bnd:,.0f}"
                                         )
-                            if not open_now and g_ticker in signals.get("basket", []):
+                            if not open_now and btc_gate_config["ticker"] in signals.get("basket", []):
                                 pass  # gated-out ticker won't be in the basket
                             elif not open_now:
                                 gate_line += "  (excluded from the basket)"
@@ -3519,7 +3695,7 @@ if run_button:
 
                         # Current Bitcoin SMA cross gate signal
                         if btc_sma_gate_config.get("enabled"):
-                            sg_ticker = btc_sma_gate_config["ticker"]
+                            sg_ticker = gate_label(btc_sma_gate_config)
                             sma_open_now = _gate_open_as_of(btc_sma_gate_config, sig_date)
                             sma_emoji = "🟢" if sma_open_now else "🔴"
                             sma_status_word = (
@@ -3855,7 +4031,7 @@ if run_button:
                                 else "trend-up"
                             )
                             st.markdown(
-                                f"**BTC gate:** {btc_gate_config['ticker']} Radius Trend "
+                                f"**BTC gate:** {gate_label(btc_gate_config)} Radius Trend "
                                 f"({bg_mode}), step {btc_gate_config['step']:.3f}, "
                                 f"dist {btc_gate_config['multi']:.2f}"
                             )
@@ -3865,7 +4041,7 @@ if run_button:
                                 else "trend-up"
                             )
                             st.markdown(
-                                f"**BTC SMA gate:** {btc_sma_gate_config['ticker']} SMA cross "
+                                f"**BTC SMA gate:** {gate_label(btc_sma_gate_config)} SMA cross "
                                 f"({sg_mode}), SMA {btc_sma_gate_config['sma_len']}d, "
                                 f"rf {btc_sma_gate_config['rf_len']}d/"
                                 f"{btc_sma_gate_config['rf_period']}d"
@@ -3910,7 +4086,8 @@ if run_button:
                         )
                         gate_note = (
                             f" Bitcoin trend gate: {btc_gate_config['ticker']} is only "
-                            f"eligible for the basket when its Radius Trend "
+                            f"eligible for the basket when the "
+                            f"{gate_signal_ticker(btc_gate_config)} Radius Trend "
                             f"{bg_mode} is in the market (Radius Step "
                             f"{btc_gate_config['step']:.3f}, Start Points Distance "
                             f"{btc_gate_config['multi']:.2f}, computed on daily bars). "
@@ -3925,7 +4102,8 @@ if run_button:
                         )
                         sma_gate_note = (
                             f" Bitcoin SMA cross gate: {btc_sma_gate_config['ticker']} is "
-                            f"only eligible for the basket when its SMA cross "
+                            f"only eligible for the basket when the "
+                            f"{gate_signal_ticker(btc_sma_gate_config)} SMA cross "
                             f"{sg_mode} is in the market ({btc_sma_gate_config['sma_len']}-day "
                             f"long SMA, {btc_sma_gate_config['rf_len']}-day rising/falling SMA "
                             f"over {btc_sma_gate_config['rf_period']} bars, computed on daily "
