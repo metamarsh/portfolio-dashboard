@@ -2957,7 +2957,7 @@ except (ValueError, IndexError):
 # ---- FIXED BASKET (fourth, collapsible) ----
 st.sidebar.markdown("---")
 
-default_fixed = ["TLT", "GLD", "BIL", "BTAL", "HGER", "IBIT"]
+default_fixed = ["TLT", "GLD", "BIL", "BTAL", "HGER"]
 selected_fixed = []
 with st.sidebar.expander("Fixed Basket Assets", expanded=False):
     st.caption("Toggle built-in assets and/or add custom tickers below.")
