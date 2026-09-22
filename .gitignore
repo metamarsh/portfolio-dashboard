@@ -42,3 +42,7 @@ Simple SMA Cross Stratey - 8H BTC.txt
 # Screenshot folders
 with BTC*/
 without BTC*/
+# MNK proxy: audit outputs and one-off analysis, not needed by the dashboard
+Synthetic MNK Components.csv
+Synthetic MNK Validation Stats.txt
+MNK vs DXJ Basket Test*

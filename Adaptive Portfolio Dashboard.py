@@ -195,6 +195,10 @@ DEFAULT_EQUITY_ETFS = {
     "IWM":  "US Small-Cap Blend",
     "DXJ":  "Japan Hedged Equity",
     "EMXC": "EM ex-China",
+    # Synthetic total-return series for the CME Micro Dollar-Denominated
+    # Nikkei 225 future, from the local "MNK SYNTH Daily Prices.csv".
+    # Rebuild it with "Build Synthetic MNK.py" to extend the data.
+    "MNK_SYNTH": "Japan Nikkei 225 Futures (MNK, synthetic)",
 }
 
 EQUITY_LOOKBACK_OPTIONS = {
@@ -1106,6 +1110,54 @@ def _gate_open_as_of(btc_gate, as_of_date):
     return bool(s.iloc[-1])
 
 
+def resolve_borrow_rate(cost, period_start, period_end):
+    """
+    Resolve leverage_cost_annual to one annual rate for a single holding period.
+
+    Accepts either:
+      * a scalar APR, e.g. 0.062 for 6.2%/yr (legacy behaviour, unchanged), or
+      * a pandas Series of daily APRs indexed by date, in which case the rate
+        returned is the mean APR in effect from period_start to period_end.
+
+    Series fallbacks, in order: mean over the window; last observation on or
+    before period_start; the series mean; then 0.0.
+    """
+    if cost is None:
+        return 0.0
+
+    if isinstance(cost, bool):
+        return 0.0
+
+    if isinstance(cost, (int, float)):
+        return float(cost)
+
+    if isinstance(cost, pd.Series):
+        s = pd.to_numeric(cost, errors="coerce").dropna()
+        if s.empty:
+            return 0.0
+        if not isinstance(s.index, pd.DatetimeIndex):
+            try:
+                s.index = pd.to_datetime(s.index)
+            except Exception:
+                return float(s.mean())
+        s = s.sort_index()
+
+        window = s.loc[(s.index >= period_start) & (s.index <= period_end)]
+        if len(window) > 0:
+            return float(window.mean())
+
+        prior = s.loc[s.index <= period_start]
+        if len(prior) > 0:
+            return float(prior.iloc[-1])
+
+        return float(s.mean())
+
+    try:
+        return float(cost)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def run_backtest(daily_prices, monthly_prices, params):
     """
     Run the adaptive portfolio backtest with the given parameters.
@@ -1315,8 +1367,14 @@ def run_backtest(daily_prices, monthly_prices, params):
         port_return_raw = port_return
         port_return = port_return * lev_mult
 
-        # Borrowing cost on leveraged portion (only when actually leveraged)
-        lev_cost_annual = leverage_params.get("leverage_cost_annual", 0.0)
+        # Borrowing cost on leveraged portion (only when actually leveraged).
+        # leverage_cost_annual may be a scalar APR (0.062 == 6.2%/yr) or a
+        # pandas Series of daily APRs, in which case this period is charged the
+        # average rate actually in effect between entry and exit.
+        lev_cost_annual = resolve_borrow_rate(
+            leverage_params.get("leverage_cost_annual", 0.0),
+            exec_date_entry, exec_date_exit
+        )
         monthly_borrow_cost = 0.0
         if lev_mult > 1.0 and lev_cost_annual > 0:
             monthly_borrow_cost = (lev_mult - 1.0) * (lev_cost_annual / 12.0)
@@ -2992,6 +3050,128 @@ with st.sidebar.expander("Equity Sub-Selection", expanded=False):
         )
         if checked:
             selected_equity.append(ticker)
+
+    if "MNK_SYNTH" in selected_equity:
+        try:
+            _mnk_last = load_local_index_data()["MNK_SYNTH"].dropna().index.max()
+            st.caption(
+                f"MNK data runs through {_mnk_last:%B %d, %Y}. It only "
+                "refreshes when you click Update MNK data below. Tick MNK in place of DXJ to test the account "
+                "version of the Japan slot."
+            )
+        except Exception:
+            st.warning("MNK SYNTH Daily Prices.csv not found. Click "
+                       "Update MNK data below to build it.")
+
+        # One-click updater: runs "Build Synthetic MNK.py" with the same
+        # Python that runs this dashboard, then reloads so the date above
+        # shows the new data. The result message survives the reload via
+        # session_state.
+        _mnk_msg = st.session_state.pop("mnk_update_msg", None)
+        if _mnk_msg:
+            _kind, _text, _tail = _mnk_msg
+            (st.success if _kind == "ok" else st.error)(_text)
+            if _tail:
+                st.code(_tail, language="text")
+
+        if st.button("Update MNK data", key="mnk_update_btn",
+                     help="Downloads fresh prices and rebuilds the MNK series. "
+                          "Takes about 1 to 2 minutes and needs internet."):
+            import subprocess
+            import sys
+            _script = os.path.join(_base_dir, "Build Synthetic MNK.py")
+            with st.spinner("Updating MNK data. This takes about 1 to 2 minutes..."):
+                try:
+                    _proc = subprocess.run(
+                        [sys.executable, "-u", _script], cwd=_base_dir,
+                        capture_output=True, text=True, timeout=600,
+                        encoding="utf-8", errors="replace",
+                    )
+                    _out = (_proc.stdout or "") + (_proc.stderr or "")
+                    _ok = _proc.returncode == 0 and "Wrote " in (_proc.stdout or "")
+                except subprocess.TimeoutExpired:
+                    _out, _ok = "Stopped after 10 minutes with no finish.", False
+                except Exception as _e:  # noqa: BLE001
+                    _out, _ok = f"Could not start the updater: {_e}", False
+            _lines = [ln for ln in _out.splitlines() if ln.strip()]
+            if _ok:
+                try:
+                    _new_last = load_local_index_data()["MNK_SYNTH"].dropna().index.max()
+                    _txt = f"MNK data updated. It now runs through {_new_last:%B %d, %Y}."
+                except Exception:
+                    _txt = "MNK data updated."
+                _fb = [ln for ln in _lines if "FALLBACK" in ln]
+                if _fb:
+                    _txt += (" Note: the Japan interest-rate site was unreachable, "
+                             "so a built-in rate table was used. Still usable; "
+                             "update again later for the official series.")
+                st.session_state["mnk_update_msg"] = ("ok", _txt, "")
+            else:
+                st.session_state["mnk_update_msg"] = (
+                    "err",
+                    "The MNK update did not finish. If the message below "
+                    "mentions Yahoo, a timeout, or no data, wait a few "
+                    "minutes and click Update MNK data again. Otherwise "
+                    "use the manual steps.",
+                    "\n".join(_lines[-15:]),
+                )
+            st.rerun()
+
+        if st.checkbox("Show manual update steps (use if the button fails)",
+                       value=False, key="mnk_update_help"):
+            st.markdown(
+                "**Update the MNK data** (about 1 to 2 minutes, needs internet)\n\n"
+                "**1. Open Windows PowerShell.** Right-click the **Start** "
+                "button on the taskbar and choose **Terminal** or "
+                "**Windows PowerShell**, whichever the menu shows. "
+                "No Windows key needed.\n\n"
+                "If neither appears: press **Ctrl + Shift + Esc** to open "
+                "Task Manager, click **Run new task**, type `powershell`, "
+                "and click **OK**.\n\n"
+                "**2. Copy this line** with the copy icon at its right edge, "
+                "paste it into PowerShell with a right-click or **Ctrl + V**, "
+                "and press **Enter**. It works from any folder."
+            )
+            st.code(
+                r'python -u "C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System'
+                r'\Backtest Engine\Build Synthetic MNK.py"',
+                language="powershell",
+            )
+            st.markdown(
+                "**3. Wait. There are no prompts to answer.** Progress lines "
+                "scroll by. It is finished when the last line reads:"
+            )
+            st.code(
+                r"Wrote C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System"
+                r"\Backtest Engine\Synthetic MNK Validation Stats.txt",
+                language="text",
+            )
+            st.markdown(
+                "**4. Close PowerShell and come back here.** Click "
+                "**Run Backtest**. The \"MNK data runs through\" date above "
+                "shows the new last date. You do not need **Clear Cache**; "
+                "that button only affects the Yahoo price cache.\n\n"
+                "**If something goes wrong**\n\n"
+                "- *\"python is not recognized\"*: paste this line instead."
+            )
+            st.code(
+                r'& "C:\Users\tyler\AppData\Local\Programs\Python\Python311\python.exe" -u '
+                r'"C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System'
+                r'\Backtest Engine\Build Synthetic MNK.py"',
+                language="powershell",
+            )
+            st.markdown(
+                "- *An error mentioning Yahoo, a timeout, or \"no data\"*: "
+                "Yahoo Finance is having a moment. Wait a few minutes and run "
+                "step 2 again. Nothing is overwritten until the run succeeds.\n"
+                "- *A line saying \"FALLBACK Bank of Japan table\"*: the Japan "
+                "interest-rate site was unreachable, so a built-in rate table "
+                "was used. The update is still usable. Run it again later for "
+                "the official series.\n"
+                "- *To see the data-quality checks*: open "
+                "`C:\\Users\\tyler\\OneDrive\\PROJECTS\\Strategy Backtesting "
+                "System\\Backtest Engine\\Synthetic MNK Validation Stats.txt`."
+            )
 
     custom_equity_input = st.text_input(
         "Add custom equity tickers (comma-separated)",
