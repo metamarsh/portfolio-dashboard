@@ -3053,11 +3053,32 @@ with st.sidebar.expander("Equity Sub-Selection", expanded=False):
 
     if "MNK_SYNTH" in selected_equity:
         try:
-            _mnk_last = load_local_index_data()["MNK_SYNTH"].dropna().index.max()
+            _mnk = load_local_index_data()["MNK_SYNTH"].dropna()
+            _mnk_first, _mnk_last = _mnk.index.min(), _mnk.index.max()
+            # Earliest backtest start at which MNK can be picked: the engine
+            # needs more month-ends of history than the longest lookback
+            # (main or equity) before a ticker is eligible.
+            _need = max(max(main_lookbacks),
+                        max(max(v[0]) for v in EQUITY_LOOKBACK_OPTIONS.values()))
+            _mnk_earliest = (_mnk_first.to_period("M") + _need + 1).strftime("%Y-%m")
+            # Must match PRICE_SWITCH in "Build Synthetic MNK.py" (first NKD=F print).
+            _mnk_switch = pd.Timestamp("2004-02-17")
             st.caption(
-                f"MNK data runs through {_mnk_last:%B %d, %Y}. It only "
-                "refreshes when you click Update MNK data below. Tick MNK in place of DXJ to test the account "
-                "version of the Japan slot."
+                f"**MNK data starts {_mnk_first:%B %d, %Y}** and runs through "
+                f"{_mnk_last:%B %d, %Y}.  \n"
+                f"**Earliest backtest start with MNK: {_mnk_earliest}** "
+                f"(with the {main_lookback_label} main lookback, MNK needs "
+                f"{_need} months of history before it can be picked).  \n"
+                f"**Most faithful from {(_mnk_switch.to_period('M') + 1).strftime('%Y-%m')}.** "
+                f"Before {_mnk_switch:%B %d, %Y} the price moves come from the "
+                "Nikkei 225 index at the Tokyo close. From then on they come "
+                "from the real dollar Nikkei futures at the Chicago close, the "
+                "same as MNK.  \n"
+                "Other assets you tick may start later. The data check after "
+                "Run Backtest flags any that do.  \n"
+                "The data only refreshes when you click Update MNK data below. "
+                "Tick MNK in place of DXJ to test the account version of the "
+                "Japan slot."
             )
         except Exception:
             st.warning("MNK SYNTH Daily Prices.csv not found. Click "
