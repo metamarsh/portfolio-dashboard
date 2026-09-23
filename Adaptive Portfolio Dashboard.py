@@ -1744,6 +1744,10 @@ def compute_current_signals(daily_prices, monthly_prices, params):
         basket                full basket of eligible tickers
         prev_month_end_date   the most recent COMPLETED calendar month-end
                               (None if no prior month-end is available)
+        prev_exec_date        last trading day of that month, when the
+                              rebalance trades ("last_day" mode only)
+        prev_data_date        the close the prev signal is computed from:
+                              the trading day before prev_exec_date
         prev_holdings         list of tickers from the prev month-end signal
         prev_weights          dict of {ticker: weight} from the prev month-end signal
     """
@@ -1784,15 +1788,42 @@ def compute_current_signals(daily_prices, monthly_prices, params):
     # in the original monthly_prices index that is at or before last_daily,
     # but not equal to the live signal date). This documents what the model
     # was holding heading into the current month for continuity context.
+    #
+    # In "last_day" mode (Tyler's real process) the signal for that
+    # rebalance is taken from the close of the trading day BEFORE the last
+    # trading day of the month, exactly as run_backtest does: signal cutoff
+    # = execution day minus one calendar day, with the month's monthly bar
+    # replaced by the forward-filled close as of that cutoff. The result
+    # therefore matches the backtest trade log for that month.
     prev_month_end_date = None
     prev_holdings = []
     prev_weights = {}
+    prev_exec_date = None
+    prev_data_date = None
     completed = monthly_prices.index[monthly_prices.index <= last_daily]
     prev_candidates = [d for d in completed if d != signal_date]
     if len(prev_candidates) > 0:
         prev_month_end_date = prev_candidates[-1]
+        prev_signal_date = prev_month_end_date
+        prev_monthly = monthly_prices
+        if params.get("exec_timing", "last_day") == "last_day":
+            cal = market_trading_dates(daily_prices)
+            in_month = cal[(cal.year == prev_month_end_date.year)
+                           & (cal.month == prev_month_end_date.month)
+                           & (cal <= prev_month_end_date)]
+            if len(in_month) > 0:
+                prev_exec_date = in_month[-1]
+                prev_signal_date = prev_exec_date - pd.Timedelta(days=1)
+                asof = daily_prices.ffill().loc[:prev_signal_date]
+                if len(asof) > 0:
+                    prev_monthly = monthly_prices.loc[:prev_month_end_date].copy()
+                    prev_monthly.iloc[-1] = asof.iloc[-1].reindex(prev_monthly.columns)
+                    prev_monthly.index = pd.DatetimeIndex(
+                        list(prev_monthly.index[:-1]) + [prev_signal_date])
+                _before = cal[cal <= prev_signal_date]
+                prev_data_date = _before.max() if len(_before) else None
         prev = _compute_signal_at(
-            daily_prices, monthly_prices, params, prev_month_end_date,
+            daily_prices, prev_monthly, params, prev_signal_date,
             full_details=False
         )
         if prev is not None:
@@ -1803,6 +1834,8 @@ def compute_current_signals(daily_prices, monthly_prices, params):
         **live,
         "equity_details": equity_details,
         "prev_month_end_date": prev_month_end_date,
+        "prev_exec_date": prev_exec_date,
+        "prev_data_date": prev_data_date,
         "prev_holdings": prev_holdings,
         "prev_weights": prev_weights,
     }
@@ -3815,9 +3848,18 @@ if run_button:
                             for t in prev_holdings:
                                 w = prev_weights.get(t, 0)
                                 prev_parts.append(f"{w:.2%} {t}")
+                            _p_data = signals.get("prev_data_date")
+                            _p_exec = signals.get("prev_exec_date")
+                            if _p_data is not None and _p_exec is not None:
+                                _p_label = (
+                                    f"from the {_p_data:%a %m/%d/%Y} close, the "
+                                    f"trading day before the {_p_exec:%a %m/%d/%Y} "
+                                    "rebalance"
+                                )
+                            else:
+                                _p_label = f"{prev_date:%m/%d/%Y} close"
                             st.caption(
-                                f"Previous month-end signal "
-                                f"({prev_date.strftime('%m/%d/%Y')}): "
+                                f"Previous month-end signal ({_p_label}): "
                                 + " | ".join(prev_parts)
                             )
 
