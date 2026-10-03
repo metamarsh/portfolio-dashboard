@@ -432,7 +432,11 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
                 result = pd.concat([result, delta_dl.loc[new_dates]])
             overlap = delta_dl.index.intersection(result.index)
             if len(overlap) > 0:
-                result.loc[overlap, delta_dl.columns] = delta_dl.loc[overlap]
+                # Keep the cached value wherever Yahoo returns a blank for an
+                # overlapping date (on 2026-09-29 Yahoo left the day's close blank
+                # for hours), so a flaky download never erases good cached data.
+                result.loc[overlap, delta_dl.columns] = delta_dl.loc[overlap].combine_first(
+                    result.loc[overlap, delta_dl.columns])
 
     if not full_dl.empty:
         if result.empty:
