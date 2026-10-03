@@ -46,3 +46,10 @@ without BTC*/
 Synthetic MNK Components.csv
 Synthetic MNK Validation Stats.txt
 MNK vs DXJ Basket Test*
+# EMXC proxy and basket tests: audit outputs and one-off analysis, not needed by the dashboard
+Synthetic EMXC Components.csv
+Synthetic EMXC Validation Stats.txt
+EMXC Backfill Check*
+EMXC Backfill Recommendation*
+EEM vs EMXC Basket Test*
+DBC vs HGER Basket Test*

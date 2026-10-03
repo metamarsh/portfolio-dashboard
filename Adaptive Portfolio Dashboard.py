@@ -3267,7 +3267,10 @@ BACKFILL_DEFAULTS = [
     ("GLD",     "GOLD"),
     ("QQQ",     "FSPTX"),
     ("IWM",     "OTCFX"),
-    ("EMXC",    "EEM, VEIEX"),
+    # EMXC_SYNTH: synthetic MSCI EM ex China, 2004-10 to EMXC's July 2017
+    # launch, from "EMXC SYNTH Daily Prices.csv" (Build Synthetic EMXC.py).
+    # Replaced the EEM-only backfill October 3, 2026, because EEM holds China.
+    ("EMXC",    "EMXC_SYNTH, EEM, VEIEX"),
     ("DXJ",     "FJPNX"),
     ("IBIT",    "BTC-USD"),
     ("",        ""),
