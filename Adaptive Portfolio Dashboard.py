@@ -333,6 +333,46 @@ def load_local_index_data():
     return local_data
 
 
+# Known bad prints in the Yahoo price history, as (ticker, date) pairs. Each
+# close is replaced at load time by the geometric midpoint of the closes on the
+# trading days before and after it. Month-end prices are unaffected by prints
+# like these, but the risk parity weights use 12 months of daily returns, so
+# one bad day distorts a year of weights. The disk cache keeps Yahoo's raw
+# value and the repair runs on every load, so a cache refresh cannot bring a
+# print back.
+#   BTAL 2015-04-29: Yahoo shows 11.2412 between 16.7317 on April 28 and
+#   16.7317 on April 30, a -32.8% day reversed +48.8% the next. Found October
+#   31, 2026. It distorted BTAL's weight in 8 hold months, August 2015 to
+#   April 2016. Evidence: C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting
+#   System\Basket Research\ETF Scouting\BTAL Glitch Check Output.txt
+KNOWN_BAD_PRINTS = [
+    ("BTAL", "2015-04-29"),
+]
+
+
+def apply_known_price_fixes(prices):
+    """Repair the KNOWN_BAD_PRINTS in a daily price frame, returning a copy if
+    anything changes. A print is skipped if its ticker or date is missing or
+    it has no trading day on either side."""
+    if prices is None or prices.empty:
+        return prices
+    out = prices
+    for ticker, date_str in KNOWN_BAD_PRINTS:
+        if ticker not in out.columns:
+            continue
+        series = out[ticker].dropna()
+        day = pd.Timestamp(date_str)
+        if day not in series.index:
+            continue
+        i = series.index.get_loc(day)
+        if i == 0 or i >= len(series) - 1:
+            continue
+        if out is prices:
+            out = prices.copy()
+        out.loc[day, ticker] = float(np.sqrt(series.iloc[i - 1] * series.iloc[i + 1]))
+    return out
+
+
 def download_data(tickers_tuple, start_date_str, force_refresh=False):
     """
     Download adjusted close prices for a list of tickers, using a local
@@ -481,7 +521,7 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
     progress.caption(f"Cache: {len(unique_tickers)} tickers loaded ({len(local_tickers)} from local files).")
 
     available = [t for t in unique_tickers if t in result.columns]
-    return result[available]
+    return apply_known_price_fixes(result[available])
 
 
 _LOCAL_INDEX_COLS = None
