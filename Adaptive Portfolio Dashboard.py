@@ -21,6 +21,16 @@ full refresh" checkbox in the sidebar to re-download everything, or
 Local index files (e.g., "QCI Daily Prices.csv") placed in the same
 folder as the dashboard are automatically detected and available as
 backfill sources. These are never sent to Yahoo Finance.
+
+Trading costs (November 1, 2026): every rebalance is charged the sidebar's
+"Trading cost per side" (default 0.05%) times one-way turnover, measured
+against the drifted weights, so strategy returns are net of costs. Set it
+to 0 to reproduce the earlier gross results exactly.
+
+If Yahoo returns no prices for a ticker the cache already holds (an
+outage), the cached series is used and a warning is shown. A ticker with
+no prices anywhere stops the run with an error instead of dropping out
+silently.
 """
 
 import warnings
@@ -36,6 +46,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
 import os
+import sys
 from datetime import datetime
 
 # =============================================================================
@@ -222,6 +233,11 @@ MAIN_LOOKBACK_OPTIONS = {
 BENCHMARK_TICKER = "SPY"
 INITIAL_CAPITAL = 10_000
 
+# Trading cost per side, charged on one-way turnover at every rebalance
+# (adopted November 1, 2026, from the Signal Flip Tests). 0.0 reproduces the
+# earlier gross results exactly.
+DEFAULT_COST_PER_SIDE = 0.0005
+
 # ---- Brand colors (mirrors the Asymmetric Edge newsletter palette) ----
 # Series colors are consistent across every chart in the dashboard:
 #   Strategy = brand purple, SPY = muted indigo, 60/40 = brand teal.
@@ -373,6 +389,11 @@ def apply_known_price_fixes(prices):
     return out
 
 
+class MissingPriceDataError(RuntimeError):
+    """A requested ticker has no prices from Yahoo, the price cache or a local
+    index file. Raised so a run stops instead of dropping the ticker silently."""
+
+
 def download_data(tickers_tuple, start_date_str, force_refresh=False):
     """
     Download adjusted close prices for a list of tickers, using a local
@@ -385,6 +406,11 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
 
     Tickers that match a local index CSV file (e.g., QCI) are loaded
     from disk and never sent to Yahoo Finance.
+
+    If a full download comes back empty for a ticker the cache holds (a
+    Yahoo outage), the cached series is kept and a warning is shown. If any
+    requested ticker still has no prices after the merge, raises
+    MissingPriceDataError before anything is written to the cache.
     """
     unique_tickers = sorted(set(tickers_tuple))
     if not unique_tickers:
@@ -446,6 +472,32 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
                 if len(needs_full_download) == 1:
                     full_dl.columns = needs_full_download
 
+    # Cache fallback (November 1, 2026). During a Yahoo outage a full
+    # re-download can come back empty, or with blank columns, for tickers the
+    # cache already holds. 13 tickers did on November 1, and with no fallback
+    # BTAL silently became the raw BAB factor. Keep the cached series instead.
+    fell_back = []
+    if needs_full_download and not cached.empty:
+        for t in needs_full_download:
+            got = full_dl[t].dropna() if t in full_dl.columns else pd.Series(dtype=float)
+            have = cached[t].dropna() if t in cached.columns else pd.Series(dtype=float)
+            if got.empty and not have.empty:
+                fell_back.append(t)
+        if fell_back:
+            kept = cached[fell_back]
+            if full_dl.empty:
+                full_dl = kept.copy()
+            else:
+                full_dl = full_dl.drop(columns=fell_back, errors="ignore").join(kept, how="outer")
+            last_dates = sorted({cached[t].last_valid_index().strftime("%Y-%m-%d") for t in fell_back})
+            fallback_msg = (
+                f"Yahoo Finance returned no prices for {', '.join(fell_back)}, so the "
+                f"cached series {'is' if len(fell_back) == 1 else 'are'} used instead "
+                f"(last cached date {', '.join(last_dates)})."
+            )
+            st.warning(fallback_msg)
+            print("WARNING: " + fallback_msg, file=sys.stderr, flush=True)
+
     delta_dl = pd.DataFrame()
     if needs_update:
         latest_cached = cached[needs_update].dropna(how="all").index.max()
@@ -491,6 +543,19 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
             result = local_subset
         else:
             result = result.join(local_subset, how="outer")
+
+    # Every requested ticker needs prices by now, from Yahoo, the cache or a
+    # local index file. Stop rather than let an empty column drop out of the
+    # backtest silently. Nothing has been written to the cache yet.
+    missing = [t for t in unique_tickers
+               if t not in result.columns or result[t].dropna().empty]
+    if missing:
+        progress.empty()
+        raise MissingPriceDataError(
+            f"No price data for {', '.join(missing)} from Yahoo Finance, the price "
+            f"cache or a local index file. Check the ticker spelling, or try again "
+            f"later if Yahoo is having an outage. The price cache was not changed."
+        )
 
     if result.empty:
         progress.empty()
@@ -1217,6 +1282,18 @@ def run_backtest(daily_prices, monthly_prices, params):
       "first_day" - signals are computed from month-end closing prices and
                   trades execute at the NEXT trading day's close (1-day
                   lag). This is the legacy behavior.
+
+    Trading costs (params["cost_per_side"], default DEFAULT_COST_PER_SIDE):
+      every rebalance is charged cost_per_side x one-way turnover, where
+      one-way turnover is half the sum of |target weight - drifted weight|
+      over every asset, so reweighting held funds counts as well as swaps.
+      Drifted weights are the previous period's weights carried through
+      that period's returns (exposure weights, so leverage counts); the
+      first rebalance buys from cash. The cost comes out of the month the
+      rebalance opens. On the daily curve a trade day's value is read
+      before its trades, so the cost shows from the next day. 0 reproduces
+      the gross results exactly. Matches net_path in Signal Flip
+      Harness.py (Signal Flip Tests folder).
     """
     fixed_tickers = params["fixed_tickers"]
     equity_tickers = params["equity_tickers"]
@@ -1231,6 +1308,8 @@ def run_backtest(daily_prices, monthly_prices, params):
     backtest_end = params.get("backtest_end", "")
     leverage_params = params.get("leverage_params", {"enabled": False})
     exec_timing = params.get("exec_timing", "last_day")
+    cost_per_side = params.get("cost_per_side", DEFAULT_COST_PER_SIDE)
+    cost_per_side = float(cost_per_side) if cost_per_side is not None else 0.0
 
     # Bitcoin trend gate (Radius Trend). When enabled, the gated ticker is
     # only admitted to the basket on months when its trend signal is "in".
@@ -1284,6 +1363,7 @@ def run_backtest(daily_prices, monthly_prices, params):
     trade_log = []
     daily_portfolio_values = {}  # {date: portfolio_value} for daily drawdown
     cumulative_multiplier = 1.0  # tracks growth across holding periods
+    prev_drift = {}  # exposure weights drifted to the last exit close (cash at the start)
 
     for i, rebal_date in enumerate(valid_months):
         if i >= len(valid_months) - 1:
@@ -1424,6 +1504,32 @@ def run_backtest(daily_prices, monthly_prices, params):
             monthly_borrow_cost = (lev_mult - 1.0) * (lev_cost_annual / 12.0)
             port_return -= monthly_borrow_cost
 
+        # --- Trading costs ---
+        # One-way turnover between this rebalance's target exposures and the
+        # previous holdings drifted to this trade's close, charged at
+        # cost_per_side (see the docstring). Skipped at zero cost so gross
+        # results reproduce bit for bit.
+        target_exposure = {t: lev_mult * weights.get(t, 0.0) for t in final_holdings}
+        turnover = 0.5 * sum(
+            abs(target_exposure.get(t, 0.0) - prev_drift.get(t, 0.0))
+            for t in sorted(set(target_exposure) | set(prev_drift))
+        )
+        trading_cost = cost_per_side * turnover if cost_per_side > 0 else 0.0
+        cost_factor = 1.0 - trading_cost
+        port_return_gross = port_return
+        if cost_per_side > 0:
+            port_return = (1.0 + port_return_gross) * cost_factor - 1.0
+
+        # Carry this period's exposures to its exit close for the next rebalance
+        growth = 1.0 + port_return_gross
+        if growth > 0:
+            prev_drift = {
+                t: target_exposure[t] * (1.0 + holding_details.get(t, {}).get("return", 0.0)) / growth
+                for t in final_holdings
+            }
+        else:
+            prev_drift = {}
+
         # --- Daily equity tracking for this holding period ---
         holding_mask = (
             (daily_prices.index >= exec_date_entry)
@@ -1454,8 +1560,12 @@ def run_backtest(daily_prices, monthly_prices, params):
             accrued_cost = 0.0
             if n_holding_days > 0 and monthly_borrow_cost > 0:
                 accrued_cost = monthly_borrow_cost * (day_idx + 1) / n_holding_days
+            # A trade day's value is read before its trades, so the trading
+            # cost shows from the next day (as in net_path).
+            day_cost_factor = cost_factor if day_idx > 0 else 1.0
             daily_portfolio_values[day] = (
-                cumulative_multiplier * (1 + day_weighted_return * lev_mult - accrued_cost) * INITIAL_CAPITAL
+                cumulative_multiplier * day_cost_factor
+                * (1 + day_weighted_return * lev_mult - accrued_cost) * INITIAL_CAPITAL
             )
 
         # Update cumulative multiplier at period end
@@ -1466,6 +1576,8 @@ def run_backtest(daily_prices, monthly_prices, params):
             "portfolio_return": port_return,
             "leverage_mult": lev_mult,
             "borrow_cost": monthly_borrow_cost,
+            "turnover": turnover,
+            "trading_cost": trading_cost,
         })
 
         holdings_str_parts = []
@@ -1508,6 +1620,8 @@ def run_backtest(daily_prices, monthly_prices, params):
             "final_holdings": " | ".join(holdings_str_parts),
             "leverage": f"{lev_mult:.2f}x",
             "lev_regime": lev_regime,
+            "turnover": f"{turnover:.1%}",
+            "trading_cost": f"{trading_cost:.3%}",
             "portfolio_return": f"{port_return:+.2%}",
         })
 
@@ -2046,6 +2160,7 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
         "Final Top N": params["final_top_n"],
         "Vol Window (months)": params["vol_months"],
         "Execution": params.get("exec_timing_label", params.get("exec_timing", "last_day")),
+        "Trading Cost (per side)": f"{params.get('cost_per_side', DEFAULT_COST_PER_SIDE):.2%}",
         "Leverage": lev_summary,
         "BTC Gate": bg_summary,
         "BTC SMA Gate": sg_summary,
@@ -2662,6 +2777,22 @@ vol_months = st.sidebar.slider(
     value=12,
     step=1,
 )
+
+cost_per_side_pct = st.sidebar.number_input(
+    "Trading cost per side (%)",
+    min_value=0.0,
+    max_value=1.0,
+    value=DEFAULT_COST_PER_SIDE * 100,
+    step=0.01,
+    format="%.2f",
+    help=(
+        "Charged at every rebalance on one-way turnover, measured against the "
+        "drifted weights, so reweighting held funds counts as well as swaps. "
+        "0.05% is the standing assumption (adopted November 1, 2026). Set 0 "
+        "to reproduce gross results."
+    ),
+)
+cost_per_side = cost_per_side_pct / 100.0
 
 # ---- DYNAMIC LEVERAGE ----
 leverage_enabled = False
@@ -3428,10 +3559,14 @@ if run_button:
         # Pass as tuple for cache hashability
         tickers_tuple = tuple(sorted(set(all_tickers_needed)))
 
-        daily_prices = download_data(tickers_tuple, download_start, force_refresh=force_refresh)
+        download_error = None
+        try:
+            daily_prices = download_data(tickers_tuple, download_start, force_refresh=force_refresh)
+        except MissingPriceDataError as exc:
+            daily_prices, download_error = None, str(exc)
 
         if daily_prices is None or daily_prices.empty:
-            st.error("Failed to download price data. Check your internet connection.")
+            st.error(download_error or "Failed to download price data. Check your internet connection.")
         else:
             # Make a mutable copy (cached data is read-only)
             daily_prices = daily_prices.copy()
@@ -3636,6 +3771,7 @@ if run_button:
                     "vol_months": vol_months,
                     "exec_timing": exec_timing,
                     "exec_timing_label": exec_timing_label,
+                    "cost_per_side": cost_per_side,
                     "backtest_start": backtest_start,
                     "backtest_end": backtest_end,
                     "backfill_summary": backfill_summary,
@@ -3766,6 +3902,18 @@ if run_button:
 
                     # ---- METRICS TABLE (moved to top of results) ----
                     st.subheader("Performance Summary")
+                    _avg_turnover = float(results_df["turnover"].loc[common_dates].mean())
+                    if cost_per_side > 0:
+                        st.caption(
+                            f"Strategy returns are net of trading costs: {cost_per_side:.2%} per side "
+                            f"on one-way turnover, which averaged {_avg_turnover:.1%} of the "
+                            f"portfolio a month. Benchmarks carry no trading costs."
+                        )
+                    else:
+                        st.caption(
+                            f"Strategy returns are gross, with no trading costs. One-way turnover "
+                            f"averaged {_avg_turnover:.1%} of the portfolio a month."
+                        )
 
                     def fmt_pct(v):
                         if isinstance(v, (int, float)) and not np.isnan(v):
