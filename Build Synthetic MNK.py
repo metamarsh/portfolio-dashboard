@@ -27,7 +27,11 @@ SOURCES
     ^N225      Yahoo Finance, Nikkei 225 index close -> daily price moves
                before Feb 2004, and cross-checks
     1321.T     Yahoo Finance, NEXT FUNDS Nikkei 225 ETF, trailing dividends
-               -> Nikkei dividend yield, 2010 on
+               -> Nikkei dividend yield, 2010 on. Yahoo split-adjusts its
+               closes but left the dividends before the 100-for-1 split of
+               October 5, 2026 in pre-split yen; split_adjusted_dividends()
+               rescales them, and the build stops if the yields still look
+               wrong (see "Dividend yield" below).
     EWJ        Yahoo Finance, iShares MSCI Japan, trailing distributions
                -> Japan dividend yield before 2010
     JPY=X      Yahoo Finance, USD/JPY -> FX vol and correlation
@@ -152,11 +156,42 @@ def fetch_oecd_jp(timeout=90):
         return None
 
 
+def split_adjusted_dividends(h, ticker):
+    """Yahoo split-adjusts Close but not always Dividends. After 1321.T's
+    100-for-1 split on October 5, 2026 it left every earlier dividend in
+    pre-split yen, so 1321.T looked as if it yielded 115% to 185% a year
+    (the October 30, 2026 build used that and was discarded), while the
+    July 2026 dividend was already adjusted. A dividend paid before a split
+    is divided by the later splits' combined ratio only when its yield on
+    that day's close is impossible as reported (over 20%) and plausible once
+    divided (under 10%), so dividends Yahoo did adjust are left alone."""
+    div = h["Dividends"].copy()
+    splits = h["Stock Splits"] if "Stock Splits" in h.columns else pd.Series(dtype=float)
+    splits = splits[splits.fillna(0.0) > 0]
+    if splits.empty:
+        return div
+    close = h["Close"].dropna()
+    fixed = []
+    for d, v in div[div > 0].items():
+        later = splits[splits.index > d]
+        c = close.loc[:d]
+        if later.empty or c.empty or c.iloc[-1] <= 0:
+            continue
+        f = float(later.prod())
+        if v / c.iloc[-1] > 0.20 and v / f / c.iloc[-1] < 0.10:
+            div.loc[d] = v / f
+            fixed.append(d)
+    if fixed:
+        log(f"{ticker}: {len(fixed)} dividends from before a stock split rescaled to the"
+            f" split-adjusted price ({fixed[0].date()} to {fixed[-1].date()})")
+    return div
+
+
 def trailing_yield(ticker, expense_ratio):
     h = yf_hist(ticker)
     close = h["Close"].dropna()
     close = close[close > 0]
-    div = h["Dividends"].reindex(close.index).fillna(0.0)
+    div = split_adjusted_dividends(h, ticker).reindex(close.index).fillna(0.0)
     ttm = div.rolling("365D").sum()
     y = ttm / close + expense_ratio
     first_ok = close.index[0] + pd.Timedelta(days=366)
@@ -247,6 +282,13 @@ ratio = ov["1321"].mean() / ov["EWJ"].mean()
 log(f"\nDividend yield overlap {ov.index.min().date()} -> {ov.index.max().date()}:"
     f"  1321.T mean {ov['1321'].mean():.2%}, EWJ-based mean {ov['EWJ'].mean():.2%}"
     f"  -> EWJ scaled by {ratio:.3f} before July 2014")
+# Guard (November 1, 2026): the clip below would otherwise hide bad dividend
+# data. A Nikkei yield averaging outside 0.3% to 5%, or an EWJ scale outside
+# 0.3 to 3, means Yahoo's dividends are wrong, so stop before writing anything.
+if not (0.003 <= ov["1321"].mean() <= 0.05 and 0.3 <= ratio <= 3.0):
+    sys.exit(f"ERROR: implausible dividend yields (1321.T mean {ov['1321'].mean():.2%},"
+             f" EWJ scale {ratio:.3f}). Nothing was written; check Yahoo's 1321.T and EWJ"
+             f" dividends and stock splits.")
 q = y1321.combine_first(yewj * ratio)
 q = to_cal(q).reindex(cal_p).bfill().clip(0.0, 0.05)
 
