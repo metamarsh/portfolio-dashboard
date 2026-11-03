@@ -3437,7 +3437,10 @@ BACKFILL_DEFAULTS = [
     ("TLT",     "VUSTX"),
     ("GLD",     "GOLD"),
     ("QQQ",     "FSPTX"),
-    ("IWM",     "OTCFX"),
+    # NAESX: Vanguard Small-Cap Index, which tracked the Russell 2000 until 2003.
+    # Replaced OTCFX, an actively managed fund that ran well ahead of the index,
+    # November 3, 2026 (see NAESX Impact Check.py in Basket Research\ETF Scouting).
+    ("IWM",     "NAESX"),
     # EMXC_SYNTH: synthetic MSCI EM ex China, 2004-10 to EMXC's July 2017
     # launch, from "EMXC SYNTH Daily Prices.csv" (Build Synthetic EMXC.py).
     # Replaced the EEM-only backfill October 3, 2026, because EEM holds China.
