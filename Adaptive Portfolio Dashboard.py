@@ -1267,6 +1267,25 @@ def resolve_borrow_rate(cost, period_start, period_end):
         return 0.0
 
 
+def resolve_backtest_end(backtest_end):
+    """Read a "YYYY-MM" backtest end as the last calendar day of that month.
+
+    run_backtest keeps the results, the trade log and the daily equity dated
+    on or before the end, and pandas reads a bare "YYYY-MM" as the first day
+    of the month. Until November 3, 2026 an end of 2026-08 therefore stopped
+    the results and the daily equity at July while the trade log kept
+    August. A full date (YYYY-MM-DD) and a blank end pass through unchanged.
+    """
+    if isinstance(backtest_end, str):
+        s = backtest_end.strip()
+        if len(s) == 7 and s[4] == "-" and s[:4].isdigit() and s[5:].isdigit():
+            try:
+                return (pd.Timestamp(s) + pd.offsets.MonthEnd(0)).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+    return backtest_end
+
+
 def run_backtest(daily_prices, monthly_prices, params):
     """
     Run the adaptive portfolio backtest with the given parameters.
@@ -1305,7 +1324,7 @@ def run_backtest(daily_prices, monthly_prices, params):
     final_top_n = params["final_top_n"]
     vol_months = params["vol_months"]
     backtest_start = params["backtest_start"]
-    backtest_end = params.get("backtest_end", "")
+    backtest_end = resolve_backtest_end(params.get("backtest_end", ""))
     leverage_params = params.get("leverage_params", {"enabled": False})
     exec_timing = params.get("exec_timing", "last_day")
     cost_per_side = params.get("cost_per_side", DEFAULT_COST_PER_SIDE)
