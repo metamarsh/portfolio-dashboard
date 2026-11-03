@@ -210,6 +210,25 @@ BACKFILL_FEE_ANNUAL = {
     # gold futures, no fund fee) before GLD's November 18, 2004 launch gets
     # GLDM's 0.10%/yr. Added November 3, 2026.
     "GLDM": {"GLD": -0.0030, "GOLD": 0.0010},
+    # QQQ before March 1999: RYOCX (Rydex OTC, a Nasdaq-100 index fund, from
+    # February 14, 1994) gets a 1.26%/yr credit, its measured shortfall to QQQ
+    # over 1999-2026; ^NDX (the Nasdaq-100 price index, no dividends) before
+    # it gets 0.56%/yr, QQQ's measured lead over the price index. Added
+    # November 3, 2026.
+    "QQQ": {"RYOCX": -0.0126, "^NDX": -0.0056},
+    # HGER's 0.68%/yr fee on its index history before its February 10, 2022
+    # launch: QCI is the Quantix index's hypothetical back-test and QCI_SYNTH a
+    # broad commodity index, neither with a fund fee. Added November 3, 2026.
+    "HGER": 0.0068,
+}
+
+# A primary's own prices from before this date are dropped and replaced by its
+# backfill chain, for a fund whose strategy changed. DXJ was the unhedged
+# WisdomTree Japan Total Dividend Fund until the close on March 31, 2010 and has
+# been yen-hedged since (WisdomTree's SEC filing of January 2010), so its
+# earlier prices come from DXJ_HEDGED. Added November 3, 2026.
+PRIMARY_HISTORY_FROM = {
+    "DXJ": "2010-04-01",
 }
 
 DEFAULT_EQUITY_ETFS = {
@@ -654,7 +673,7 @@ def market_trading_dates(daily_prices):
 
 
 def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers,
-                            fee_annual=0.0):
+                            fee_annual=0.0, primary_from=None):
     """
     Build a single price series for primary_ticker, extending it backward
     using backfill tickers (in priority order) where the primary has no data.
@@ -672,6 +691,10 @@ def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers,
     and a negative fee is a credit, for a source whose own fees run higher
     than the primary's -- e.g. GLD (0.40%) standing in for GLDM (0.10%).
 
+    primary_from drops the primary's own prices before that date, so the
+    backfill chain covers them too, for a fund whose strategy changed (see
+    PRIMARY_HISTORY_FROM).
+
     The synthetic segment is also masked to the exchange calendar whenever
     the primary is not itself a 24/7 asset. A 24/7 backfill source such as
     BTC-USD would otherwise hand the ETF weekend closes it could never have
@@ -685,6 +708,8 @@ def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers,
         primary = daily_prices[primary_ticker].copy()
     else:
         primary = pd.Series(dtype=float, index=daily_prices.index, name=primary_ticker)
+    if primary_from is not None:
+        primary = primary.where(primary.index >= pd.Timestamp(primary_from))
 
     primary_valid = primary.dropna()
     segments = []
@@ -3466,10 +3491,22 @@ st.sidebar.markdown("---")
 
 # Pre-filled defaults based on Portfolio Visualizer backfill mappings
 BACKFILL_DEFAULTS = [
+    # HGER's index history carries its 0.68% fee (BACKFILL_FEE_ANNUAL) since
+    # November 3, 2026.
     ("HGER",    "QCI, QCI_SYNTH"),
-    ("BTAL",    "BAB"),
-    ("BIL",     "VFISX"),
-    ("TLT",     "VUSTX"),
+    # BTAL_SYNTH: T-bills + 0.733 x BAB - 0.600 x the S&P 500's return over
+    # T-bills, fitted to BTAL 2011-2025, from "BTAL SYNTH Daily Prices.csv".
+    # Replaced the raw BAB factor, which is beta neutral and so lacked BTAL's
+    # short-market tilt, November 3, 2026.
+    ("BTAL",    "BTAL_SYNTH"),
+    # TBILL_SYNTH: 13-week T-bill total return less BIL's fee, from
+    # "TBILL SYNTH Daily Prices.csv". Replaced VFISX, a 1-3 year Treasury
+    # fund, November 3, 2026. BIL is also the risk-free rate.
+    ("BIL",     "TBILL_SYNTH"),
+    # TLT_SYNTH: 20-30 year par Treasuries priced off the Federal Reserve's
+    # zero-coupon curve, from "TLT SYNTH Daily Prices.csv". Replaced VUSTX
+    # (10+ year bonds, about 15% less duration) November 3, 2026.
+    ("TLT",     "TLT_SYNTH"),
     # GLDM: GLD's history before GLDM's June 26, 2018 launch, then GOLD (gold
     # futures) before GLD's November 18, 2004 launch, both fee-adjusted to
     # GLDM's 0.10% (BACKFILL_FEE_ANNUAL). The default since November 3, 2026.
@@ -3479,7 +3516,10 @@ BACKFILL_DEFAULTS = [
     # GLD is no longer a ticked option; this rule serves a GLD typed into the
     # custom tickers box.
     ("GLD",     "GOLD"),
-    ("QQQ",     "FSPTX"),
+    # QQQ: RYOCX (Rydex OTC, a Nasdaq-100 index fund) from February 1994,
+    # then the Nasdaq-100 price index, fee-adjusted (BACKFILL_FEE_ANNUAL).
+    # Replaced FSPTX, an actively managed tech fund, November 3, 2026.
+    ("QQQ",     "RYOCX, ^NDX"),
     # NAESX: Vanguard Small-Cap Index, which tracked the Russell 2000 until 2003.
     # Replaced OTCFX, an actively managed fund that ran well ahead of the index,
     # November 3, 2026 (see NAESX Impact Check.py in Basket Research\ETF Scouting).
@@ -3488,7 +3528,13 @@ BACKFILL_DEFAULTS = [
     # launch, from "EMXC SYNTH Daily Prices.csv" (Build Synthetic EMXC.py).
     # Replaced the EEM-only backfill October 3, 2026, because EEM holds China.
     ("EMXC",    "EMXC_SYNTH, EEM, VEIEX"),
-    ("DXJ",     "FJPNX"),
+    # DXJ_HEDGED: DXJ's own unhedged returns before its April 1, 2010 change
+    # to a yen-hedged fund and EWJ's from November 1996, converted to
+    # yen-hedged, with MNK_SYNTH before that; from "DXJ HEDGED Daily
+    # Prices.csv". DXJ's own prices before 2010-04-01 are replaced
+    # (PRIMARY_HISTORY_FROM). Replaced FJPNX, an actively managed unhedged
+    # fund, November 3, 2026.
+    ("DXJ",     "DXJ_HEDGED"),
     ("IBIT",    "BTC-USD"),
     ("",        ""),
     ("",        ""),
@@ -3624,6 +3670,7 @@ if run_button:
                     spliced, segments = build_backfilled_series(
                         daily_prices, primary, chain,
                         fee_annual=BACKFILL_FEE_ANNUAL.get(primary, 0.0),
+                        primary_from=PRIMARY_HISTORY_FROM.get(primary),
                     )
                     daily_prices[primary] = spliced
                     for seg_ticker, seg_start, seg_end in segments:
