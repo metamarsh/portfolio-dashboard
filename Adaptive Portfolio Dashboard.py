@@ -186,7 +186,10 @@ plt.rcParams.update({
 
 DEFAULT_FIXED_ASSETS = {
     "TLT":     "Bonds (20+ Year Treasury)",
-    "GLD":     "Gold",
+    # GLDM replaced GLD as the default gold fund November 3, 2026: the same
+    # gold for 0.10% a year against GLD's 0.40%. GLD can still be run by
+    # typing it into the custom tickers box.
+    "GLDM":    "Gold (SPDR Gold MiniShares)",
     "BIL":     "Cash (1-3 Month T-Bill)",
     "BTAL":    "Defensive Equity Factor",
     "HGER":    "Commodity (All-Weather)",
@@ -194,11 +197,19 @@ DEFAULT_FIXED_ASSETS = {
     "BTC-USD": "Bitcoin (Spot Price)",
 }
 
-# Expense-ratio drag applied to a backfilled (synthetic) segment, by primary
-# ticker. Only needed where the backfill source is the underlying asset
-# itself, so the synthetic era would otherwise carry no fund fees.
+# Expense-ratio adjustment applied to a backfilled (synthetic) segment, by
+# primary ticker. A number applies to every segment of the chain; a
+# {backfill ticker: fee} dict sets one per source; a negative fee is a credit.
+# Needed where the backfill source is the underlying asset itself, so the
+# synthetic era would otherwise carry no fund fees, or a fund whose fee
+# differs from the primary's.
 BACKFILL_FEE_ANNUAL = {
     "IBIT": 0.0025,   # iShares Bitcoin Trust, 0.25%/yr
+    # GLDM (0.10%/yr) before its June 26, 2018 launch: GLD's prices already
+    # carry GLD's 0.40%/yr, so they get a 0.30%/yr credit; GOLD (Yahoo GC=F
+    # gold futures, no fund fee) before GLD's November 18, 2004 launch gets
+    # GLDM's 0.10%/yr. Added November 3, 2026.
+    "GLDM": {"GLD": -0.0030, "GOLD": 0.0010},
 }
 
 DEFAULT_EQUITY_ETFS = {
@@ -657,6 +668,9 @@ def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers,
     is the underlying asset itself -- e.g. IBIT backfilled with BTC-USD.
     The primary's own history already has its fees baked into price, so
     without this the synthetic era would look better than the ETF era.
+    fee_annual can also be a {backfill ticker: fee} dict, one fee per source,
+    and a negative fee is a credit, for a source whose own fees run higher
+    than the primary's -- e.g. GLD (0.40%) standing in for GLDM (0.10%).
 
     The synthetic segment is also masked to the exchange calendar whenever
     the primary is not itself a 24/7 asset. A 24/7 backfill source such as
@@ -714,10 +728,12 @@ def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers,
 
         # Expense-ratio drag on the synthetic segment. Anchored at the
         # primary's first real price and worked backwards, so a fee makes
-        # the synthetic series start HIGHER and grow more slowly.
-        if fee_annual and fee_annual > 0:
+        # the synthetic series start HIGHER and grow more slowly (and a
+        # credit, a negative fee, the reverse).
+        fee = fee_annual.get(bf_ticker, 0.0) if isinstance(fee_annual, dict) else fee_annual
+        if fee:
             yrs = (earliest_combined - bf_scaled.index).days / 365.25
-            bf_scaled = bf_scaled / ((1.0 - fee_annual) ** yrs)
+            bf_scaled = bf_scaled / ((1.0 - fee) ** yrs)
 
         # Fill in the earlier dates (exclude the overlap date itself)
         fill_dates = bf_scaled.index[bf_scaled.index < earliest_combined]
@@ -3242,7 +3258,7 @@ except (ValueError, IndexError):
 # ---- FIXED BASKET (fourth, collapsible) ----
 st.sidebar.markdown("---")
 
-default_fixed = ["TLT", "GLD", "BIL", "BTAL", "HGER"]
+default_fixed = ["TLT", "GLDM", "BIL", "BTAL", "HGER"]
 selected_fixed = []
 with st.sidebar.expander("Fixed Basket Assets", expanded=False):
     st.caption("Toggle built-in assets and/or add custom tickers below.")
@@ -3454,6 +3470,14 @@ BACKFILL_DEFAULTS = [
     ("BTAL",    "BAB"),
     ("BIL",     "VFISX"),
     ("TLT",     "VUSTX"),
+    # GLDM: GLD's history before GLDM's June 26, 2018 launch, then GOLD (gold
+    # futures) before GLD's November 18, 2004 launch, both fee-adjusted to
+    # GLDM's 0.10% (BACKFILL_FEE_ANNUAL). The default since November 3, 2026.
+    # Keep this row above GLD's: rules run in order, and GLDM's chain must
+    # read GLD's own prices before GLD's rule extends them with GOLD.
+    ("GLDM",    "GLD, GOLD"),
+    # GLD is no longer a ticked option; this rule serves a GLD typed into the
+    # custom tickers box.
     ("GLD",     "GOLD"),
     ("QQQ",     "FSPTX"),
     # NAESX: Vanguard Small-Cap Index, which tracked the Russell 2000 until 2003.
