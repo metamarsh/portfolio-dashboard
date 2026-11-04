@@ -2128,6 +2128,28 @@ def compute_metrics(monthly_returns, rf_monthly=None, daily_equity=None):
         worst_day = np.nan
         worst_day_date = None
 
+    # Worst/best week from week-ending (Friday) closes of the daily equity
+    # curve, the same method the Chart Dashboard uses. The first partial
+    # week drops out because it has no prior Friday close.
+    worst_week = best_week = np.nan
+    worst_week_date = best_week_date = None
+    if daily_equity is not None and len(daily_equity) > 1:
+        _de = daily_equity.copy()
+        _de.index = pd.to_datetime(_de.index)
+        weekly_pct = _de.resample("W-FRI").last().dropna().pct_change().dropna()
+        if len(weekly_pct) > 0:
+            worst_week = weekly_pct.min()
+            best_week = weekly_pct.max()
+            worst_week_date = weekly_pct.idxmin()
+            best_week_date = weekly_pct.idxmax()
+
+    # Worst/best month from the monthly return series (month-end index, so
+    # the date labels the month the return belongs to).
+    worst_month = r.min()
+    best_month = r.max()
+    worst_month_date = r.idxmin()
+    best_month_date = r.idxmax()
+
     # Fix 8: Filter partial years for best/worst year
     r_copy = r.copy()
     r_copy.index = pd.to_datetime(r_copy.index)
@@ -2153,6 +2175,14 @@ def compute_metrics(monthly_returns, rf_monthly=None, daily_equity=None):
         "DD Trough Date": trough_date,
         "Worst Day": worst_day,
         "Worst Day Date": worst_day_date,
+        "Worst Week": worst_week,
+        "Worst Week Date": worst_week_date,
+        "Best Week": best_week,
+        "Best Week Date": best_week_date,
+        "Worst Month": worst_month,
+        "Worst Month Date": worst_month_date,
+        "Best Month": best_month,
+        "Best Month Date": best_month_date,
         "Calmar Ratio": calmar,
         "Best Year": best_year,
         "Worst Year": worst_year,
@@ -4037,8 +4067,25 @@ if run_button:
                     for entry in balanced_data:
                         metric_cols.append((entry["label"], entry["metrics"]))
 
-                    def metric_row(name, key, fmt, bold):
-                        vals = [fmt(m.get(key, 0)) for _, m in metric_cols]
+                    def _fmt_occurrence(ts, kind):
+                        # (inline text, hover text) for the date beneath a value,
+                        # matching the Chart Dashboard's labels.
+                        ts = pd.Timestamp(ts)
+                        if kind == "month":
+                            return ts.strftime("%b %Y"), ts.strftime("%B %Y")
+                        d = f"{ts.strftime('%b')} {ts.day}, {ts.year}"
+                        return d, (f"Week ending {d}" if kind == "week" else d)
+
+                    def metric_row(name, key, fmt, bold, date_key=None, date_kind=None):
+                        vals = []
+                        for _, m in metric_cols:
+                            v = fmt(m.get(key, 0))
+                            dt = m.get(date_key) if date_key else None
+                            if dt is not None and not (isinstance(dt, float) and np.isnan(dt)):
+                                inline, tip = _fmt_occurrence(dt, date_kind)
+                                v = (f'<span title="{tip}">{v}'
+                                     f'<span class="cell-date">{inline}</span></span>')
+                            vals.append(v)
                         return (name, vals, bold)
 
                     # Ordered with key metrics first; Sharpe and Total Months removed
@@ -4049,6 +4096,10 @@ if run_button:
                         metric_row("Max Drawdown",      "Max Drawdown",        fmt_pct,    True),
                         metric_row("Max DD (Daily)",    "Max Drawdown (Daily)",fmt_pct,    True),
                         metric_row("Worst Single Day",  "Worst Day",           fmt_pct,    False),
+                        metric_row("Worst Week",        "Worst Week",          fmt_pct,    False, "Worst Week Date",  "week"),
+                        metric_row("Best Week",         "Best Week",           fmt_pct,    False, "Best Week Date",   "week"),
+                        metric_row("Worst Month",       "Worst Month",         fmt_pct,    False, "Worst Month Date", "month"),
+                        metric_row("Best Month",        "Best Month",          fmt_pct,    False, "Best Month Date",  "month"),
                         metric_row("Calmar Ratio",      "Calmar Ratio",        fmt_ratio,  False),
                         metric_row("Annualized Vol",    "Annualized Vol",      fmt_pct,    False),
                         metric_row("Best Year",         "Best Year",           fmt_pct,    False),
@@ -4074,6 +4125,7 @@ if run_button:
                         '.metrics-table tbody td:first-child { text-align: left; color: #666677; font-weight: 500; }',
                         '.metrics-table tbody tr:hover { background-color: #f7f5fb; }',
                         '.metrics-table .bold-row td { font-weight: 700; color: #484848; }',
+                        '.metrics-table tbody td .cell-date { display: block; font-size: 11px; font-weight: 400; color: #777788; margin-top: 2px; letter-spacing: 0.01em; }',
                         '</style>',
                         '<table class="metrics-table">',
                         f'<thead><tr><th>Metric</th>{header_cells}</tr></thead>',
