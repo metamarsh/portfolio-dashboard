@@ -223,12 +223,18 @@ BACKFILL_FEE_ANNUAL = {
 }
 
 # A primary's own prices from before this date are dropped and replaced by its
-# backfill chain, for a fund whose strategy changed. DXJ was the unhedged
-# WisdomTree Japan Total Dividend Fund until the close on March 31, 2010 and has
-# been yen-hedged since (WisdomTree's SEC filing of January 2010), so its
-# earlier prices come from DXJ_HEDGED. Added November 3, 2026.
+# backfill chain, for a fund whose strategy changed or whose first months of
+# trading don't reflect its holdings. DXJ was the unhedged WisdomTree Japan
+# Total Dividend Fund until the close on March 31, 2010 and has been yen-hedged
+# since (WisdomTree's SEC filing of January 2010), so its earlier prices come
+# from DXJ_HEDGED. AOR and AOA, the 60/40 and 80/20 benchmarks, launched in
+# November 2008 and traded too thinly to track their Vanguard stand-ins until
+# about June 2009 (AOR fell 16.2% on December 1, 2008, VSMGX 6.1%), so VSMGX
+# and VASGX carry them until then. Added November 3, 2026.
 PRIMARY_HISTORY_FROM = {
     "DXJ": "2010-04-01",
+    "AOR": "2009-06-01",
+    "AOA": "2009-06-01",
 }
 
 DEFAULT_EQUITY_ETFS = {
