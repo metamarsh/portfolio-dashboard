@@ -258,6 +258,88 @@ PRIMARY_HISTORY_FROM = {
     "BTAL": "2019-01-02",
 }
 
+# Why each asset's history is built the way it is, shown under "Data
+# adjustments" at the bottom of the results page for the assets in a run.
+# They describe the default rules (BACKFILL_DEFAULTS, BACKFILL_FEE_ANNUAL,
+# PRIMARY_HISTORY_FROM, KNOWN_BAD_PRINTS, BAL_BENCHMARKS); keep them in step
+# with those and with the full record in "Data Adjustments.md" in the
+# Backtest Engine project folder. Added November 4, 2026.
+DATA_ADJUSTMENT_NOTES = {
+    "HGER": (
+        "Before its February 10, 2022 launch: the Quantix Commodity Index it tracks (a hypothetical "
+        "back-test before the index's January 2022 launch), and before 2001 a broad commodity index built "
+        "to track Bloomberg's (QCI_SYNTH), with HGER's 0.68% fee charged throughout. The Quantix back-test "
+        "compounded far faster than broad commodities (about 10% a year in 2001-2025 against about 1.5%), "
+        "so results that lean on HGER before 2022 flatter it; research rechecks them on the broad index alone."
+    ),
+    "BTAL": (
+        "Its own closes from January 2, 2019. From its September 2011 launch through 2018 it traded a few "
+        "hundred shares a day, often none, so its closes were stale marks that strayed from the fund's value "
+        "and made it look more volatile than it was; its daily NAV (AGF's, distributions reinvested) is used "
+        "instead. Before launch: T-bills + 0.733 x the AQR Betting Against Beta factor - 0.600 x the S&P "
+        "500's return over T-bills, fitted to BTAL's 2011-2025 returns (correlation 0.75 out of sample), "
+        "the least certain stand-in."
+    ),
+    "BIL": (
+        "Before its May 30, 2007 launch: the 13-week T-bill's total return less BIL's fee (tracking error "
+        "0.15% a year against BIL since 2007). It replaced a 1-3 year Treasury fund 5.5 times as volatile, "
+        "which had shrunk the cash weight in defensive months. BIL is also the risk-free rate."
+    ),
+    "TLT": (
+        "Before its July 30, 2002 launch: 20 to 30-year Treasuries priced off the Federal Reserve's "
+        "zero-coupon curve, less TLT's 0.15% fee (tracking error 1.5% a year against TLT since 2002). It "
+        "replaced a 10-plus-year bond fund with about 15% less duration."
+    ),
+    "GLDM": (
+        "Before its June 26, 2018 launch: GLD, credited 0.30% a year for GLD's higher fee, and before GLD's "
+        "November 18, 2004 launch, gold futures less GLDM's 0.10% fee."
+    ),
+    "GLD": "Before its November 18, 2004 launch: gold futures, with no fund fee charged.",
+    "QQQ": (
+        "Before its March 10, 1999 launch: Rydex's Nasdaq-100 index fund (RYOCX), credited 1.26% a year for "
+        "its higher costs (correlation 0.999 with QQQ since 1999), and before February 1994 the Nasdaq-100 "
+        "price index plus 0.56% a year. It replaced an actively managed tech fund that the Nasdaq-100 beat "
+        "by about 10 points a year."
+    ),
+    "IWM": (
+        "Before its May 26, 2000 launch: Vanguard Small-Cap Index (NAESX), which tracked the Russell 2000 "
+        "until 2003 (tracking error 2.6% a year). It replaced an active small-cap fund that ran about 5.6 "
+        "points a year ahead of IWM."
+    ),
+    "DXJ": (
+        "DXJ was an unhedged Japan dividend fund until March 31, 2010, so its own prices start April 1, "
+        "2010. Before that: its own and the MSCI Japan fund's (EWJ) returns converted to yen-hedged, with a "
+        "hedged Nikkei 225 futures proxy before November 1996 (the same conversion tracks the real hedged "
+        "MSCI Japan fund at a 0.97 correlation). Six misdated 2008 yen closes in Yahoo's data are repaired."
+    ),
+    "EMXC": (
+        "Before its July 2017 launch: a synthetic MSCI Emerging Markets ex China, EEM less a China sleeve "
+        "at China's published index weight, from October 2004 (after launch it picked the same equities as "
+        "real EMXC in 103 of 109 months); EEM before that; and before April 2003 Vanguard's EM index fund "
+        "(VEIEX), whose index held Hong Kong and Singapore and, until 2000-2001, no Korea, Taiwan, China or "
+        "India, a known limit."
+    ),
+    "IBIT": (
+        "Before its January 11, 2024 launch: Bitcoin's price (BTC-USD) less IBIT's 0.25% fee, on exchange "
+        "trading days only. It joins the basket once it has more month-ends of history than the longest "
+        "lookback (June 2015 from a 1995 start). Bitcoin is in the basket with hindsight, since it survived "
+        "and soared, so its early gains are partly in-sample."
+    ),
+    "AOR": (
+        "The 60/40 benchmark line uses Vanguard's balanced fund VSMGX through May 2009, because AOR traded "
+        "too thinly at first to track its holdings (it fell 16.2% on December 1, 2008, against VSMGX's 6.1%)."
+    ),
+    "AOA": (
+        "The 80/20 benchmark line uses Vanguard's VASGX through May 2009, because AOA traded too thinly at "
+        "first to track its holdings."
+    ),
+    "MNK_SYNTH": (
+        "A synthetic for the CME Micro Nikkei 225 future, not a fund: the full-size dollar Nikkei future's "
+        "price moves (the Nikkei 225 index before 2004) plus modeled carry, calibrated to MNK's actual rolls "
+        "in 2025-2026 (+52.35% against MNK's +52.07% over that year)."
+    ),
+}
+
 DEFAULT_EQUITY_ETFS = {
     "QQQ":  "US Large-Cap Growth",
     "IWM":  "US Small-Cap Blend",
@@ -4700,6 +4782,37 @@ if run_button:
                         st.markdown("---")
                         with st.expander("Backfill details (which ticker covers which dates)"):
                             st.dataframe(pd.DataFrame(backfill_info), use_container_width=True, hide_index=True)
+
+                    # ---- DATA ADJUSTMENTS: why each asset's history is built as it is ----
+                    _run_assets = list(dict.fromkeys(
+                        list(selected_fixed)
+                        + (list(selected_equity) if equity_top_n > 0 else [])
+                        + [c["ticker"] for c in BAL_BENCHMARKS]
+                    ))
+                    _adj_assets = [t for t in _run_assets if t in DATA_ADJUSTMENT_NOTES]
+                    if _adj_assets:
+                        _default_chains = {
+                            p.strip().upper(): [x.strip().upper() for x in c.split(",") if x.strip()]
+                            for p, c in BACKFILL_DEFAULTS if p.strip()
+                        }
+                        with st.expander("Data adjustments (why some histories are stand-ins or repaired)"):
+                            st.caption(
+                                "The table above shows which source covers which dates; these notes say why. "
+                                "They describe the default rules."
+                            )
+                            for _t in _adj_assets:
+                                _note = DATA_ADJUSTMENT_NOTES[_t]
+                                if _t in _default_chains and backfill_rules.get(_t) != _default_chains[_t]:
+                                    _used = ", ".join(backfill_rules.get(_t, [])) or "none"
+                                    _note += (
+                                        f" *This run's backfill rule for {_t} is not the default "
+                                        f"({_used}), so the table above, not this note, describes it.*"
+                                    )
+                                st.markdown(f"**{_t}.** {_note}")
+                            st.caption(
+                                "The full record, with how each stand-in was checked against its real fund and "
+                                "when each change was made: Data Adjustments.md in the Backtest Engine project folder."
+                            )
 
                     lev_note = ""
                     if leverage_params_ui.get("enabled", False):
