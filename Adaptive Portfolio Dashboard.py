@@ -197,6 +197,15 @@ DEFAULT_FIXED_ASSETS = {
     "BTC-USD": "Bitcoin (Spot Price)",
 }
 
+# Fixed assets that may start after the backtest start. Instead of blocking the
+# run, they join the basket once they have more month-ends of history than the
+# longest main lookback, the rule run_backtest already applies to every fixed
+# asset. Bitcoin is the case: IBIT, backfilled with BTC-USD, has prices only
+# from September 2014, so with the 2/8 lookback it joins in June 2015. Added
+# November 3, 2026, when IBIT became a default fixed asset (the live strategy
+# holds it).
+JOIN_WHEN_AVAILABLE = {"IBIT", "BTC-USD"}
+
 # Expense-ratio adjustment applied to a backfilled (synthetic) segment, by
 # primary ticker. A number applies to every segment of the chain; a
 # {backfill ticker: fee} dict sets one per source; a negative fee is a credit.
@@ -3319,7 +3328,9 @@ except (ValueError, IndexError):
 # ---- FIXED BASKET (fourth, collapsible) ----
 st.sidebar.markdown("---")
 
-default_fixed = ["TLT", "GLDM", "BIL", "BTAL", "HGER"]
+# IBIT is pre-selected since November 3, 2026. It joins the basket once it has
+# enough history (JOIN_WHEN_AVAILABLE), so a 1995 start still runs.
+default_fixed = ["TLT", "GLDM", "BIL", "BTAL", "HGER", "IBIT"]
 selected_fixed = []
 with st.sidebar.expander("Fixed Basket Assets", expanded=False):
     st.caption("Toggle built-in assets and/or add custom tickers below.")
@@ -3733,6 +3744,7 @@ if run_button:
                 required_by = pd.Timestamp("2012-01-01")
 
             data_issues = []
+            late_joiners = []
             for ticker in all_selected:
                 if ticker not in daily_prices.columns:
                     data_issues.append({
@@ -3751,19 +3763,25 @@ if run_button:
                             "Data Required By": required_by.strftime("%Y-%m"),
                         })
                     elif first_valid > required_by:
-                        data_issues.append({
-                            "Ticker": ticker,
-                            "Issue": f"Data starts too late (need {max_lb}mo lookback before {backtest_start})",
-                            "Earliest Data": first_valid.strftime("%Y-%m-%d"),
-                            "Data Required By": required_by.strftime("%Y-%m"),
-                        })
+                        if ticker in JOIN_WHEN_AVAILABLE and ticker in selected_fixed:
+                            late_joiners.append((ticker, first_valid))
+                        else:
+                            data_issues.append({
+                                "Ticker": ticker,
+                                "Issue": f"Data starts too late (need {max_lb}mo lookback before {backtest_start})",
+                                "Earliest Data": first_valid.strftime("%Y-%m-%d"),
+                                "Data Required By": required_by.strftime("%Y-%m"),
+                            })
 
             if data_issues:
                 st.error("**Backtest blocked.** The following assets do not have enough data for your selected start date:")
                 st.dataframe(pd.DataFrame(data_issues), use_container_width=True, hide_index=True)
 
                 latest_inception = pd.Timestamp("1900-01-01")
+                late_tickers = {lt for lt, _ in late_joiners}
                 for ticker in all_selected:
+                    if ticker in late_tickers:
+                        continue
                     if ticker in daily_prices.columns:
                         fv = daily_prices[ticker].dropna().index.min()
                         if fv is not None and fv > latest_inception:
@@ -3777,6 +3795,12 @@ if run_button:
                     )
             else:
                 # ---- RUN BACKTEST ----
+                for _lt, _lt_first in late_joiners:
+                    _join = (_lt_first.to_period("M") + max_lb + 1).strftime("%Y-%m")
+                    st.info(
+                        f"{_lt} has prices from {_lt_first:%B %d, %Y}, so it joins the "
+                        f"basket from {_join}, once it has {max_lb} months of history."
+                    )
                 backfill_summary = "; ".join(
                     [f"{k} <- {', '.join(v)}" for k, v in backfill_rules.items()]
                 ) if backfill_rules else "None"
