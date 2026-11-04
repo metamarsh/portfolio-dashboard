@@ -406,8 +406,25 @@ def load_local_index_data():
 #   31, 2026. It distorted BTAL's weight in 8 hold months, August 2015 to
 #   April 2016. Evidence: C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting
 #   System\Basket Research\ETF Scouting\BTAL Glitch Check Output.txt
+#   DXJ_HEDGED 2008-01-08, 2008-04-08, 2008-05-08, 2008-07-08, 2008-10-08
+#   and 2008-12-08: Yahoo's JPY=X, which DXJ_HEDGED is hedged with before
+#   April 2010, files August 2008 closes under the 8th of these months (day
+#   and month swapped; the close dated December 8 is August 12's 109.24 yen,
+#   against 92.82 and 92.30 on either side). Each shows as a one-day spike
+#   reversed the next day, the largest +24.5% then -16.5% on December 8 and
+#   9. Found November 3, 2026. They overstated DXJ's 2008 daily volatility
+#   (58% a year against 47% repaired); effect on the standing configuration
+#   at most 0.003 Sortino. Evidence: C:\Users\tyler\OneDrive\PROJECTS\Strategy
+#   Backtesting System\Basket Research\ETF Scouting\DXJ Slot Deep Test
+#   2026-11-03\Yen Print Recheck Output.txt
 KNOWN_BAD_PRINTS = [
     ("BTAL", "2015-04-29"),
+    ("DXJ_HEDGED", "2008-01-08"),
+    ("DXJ_HEDGED", "2008-04-08"),
+    ("DXJ_HEDGED", "2008-05-08"),
+    ("DXJ_HEDGED", "2008-07-08"),
+    ("DXJ_HEDGED", "2008-10-08"),
+    ("DXJ_HEDGED", "2008-12-08"),
 ]
 
 
