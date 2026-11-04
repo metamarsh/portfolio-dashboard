@@ -240,10 +240,22 @@ BACKFILL_FEE_ANNUAL = {
 # November 2008 and traded too thinly to track their Vanguard stand-ins until
 # about June 2009 (AOR fell 16.2% on December 1, 2008, VSMGX 6.1%), so VSMGX
 # and VASGX carry them until then. Added November 3, 2026.
+# BTAL traded a few hundred shares a day from its September 2011 launch through
+# 2018, often none, so many of its Yahoo closes then are zero-volume marks or
+# odd-lot trades: 9 month-end closes sit more than 1% from NAV (December 31,
+# 2014 +2.93%), and even with the 2015-04-29 repair the closes make BTAL look
+# 14.3% volatile a year against its NAV's 11.4% (2011-2018), which cut its
+# inverse-volatility weight. From 2019 its close tracks NAV (no month-end off
+# by more than 1%, daily correlation 0.96). So BTAL_NAV, its
+# daily NAV from AGF with distributions reinvested ("BTAL NAV Daily Prices.csv"),
+# carries it before 2019. Added November 4, 2026. Evidence: C:\Users\tyler\
+# OneDrive\PROJECTS\Strategy Backtesting System\Basket Research\ETF Scouting\
+# BTAL NAV Fix 2026-11-04\BTAL NAV Check Output.txt
 PRIMARY_HISTORY_FROM = {
     "DXJ": "2010-04-01",
     "AOR": "2009-06-01",
     "AOA": "2009-06-01",
+    "BTAL": "2019-01-02",
 }
 
 DEFAULT_EQUITY_ETFS = {
@@ -406,6 +418,9 @@ def load_local_index_data():
 #   31, 2026. It distorted BTAL's weight in 8 hold months, August 2015 to
 #   April 2016. Evidence: C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting
 #   System\Basket Research\ETF Scouting\BTAL Glitch Check Output.txt
+#   Since November 4, 2026, BTAL's own closes before 2019 are replaced by its NAV
+#   (PRIMARY_HISTORY_FROM), so this repair matters only to a BTAL run without
+#   the default backfill rule.
 #   DXJ_HEDGED 2008-01-08, 2008-04-08, 2008-05-08, 2008-07-08, 2008-10-08
 #   and 2008-12-08: Yahoo's JPY=X, which DXJ_HEDGED is hedged with before
 #   April 2010, files August 2008 closes under the 8th of these months (day
@@ -3558,11 +3573,14 @@ BACKFILL_DEFAULTS = [
     # HGER's index history carries its 0.68% fee (BACKFILL_FEE_ANNUAL) since
     # November 3, 2026.
     ("HGER",    "QCI, QCI_SYNTH"),
-    # BTAL_SYNTH: T-bills + 0.733 x BAB - 0.600 x the S&P 500's return over
-    # T-bills, fitted to BTAL 2011-2025, from "BTAL SYNTH Daily Prices.csv".
-    # Replaced the raw BAB factor, which is beta neutral and so lacked BTAL's
-    # short-market tilt, November 3, 2026.
-    ("BTAL",    "BTAL_SYNTH"),
+    # BTAL_NAV: BTAL's daily NAV with distributions reinvested, from "BTAL NAV
+    # Daily Prices.csv" (AGF's NAV file), for September 12, 2011 to 2018, when
+    # BTAL's own closes are replaced (PRIMARY_HISTORY_FROM). Added November 4,
+    # 2026. BTAL_SYNTH before launch: T-bills + 0.733 x BAB - 0.600 x the S&P
+    # 500's return over T-bills, fitted to BTAL 2011-2025, from "BTAL SYNTH
+    # Daily Prices.csv". BTAL_SYNTH replaced the raw BAB factor, which is beta
+    # neutral and so lacked BTAL's short-market tilt, November 3, 2026.
+    ("BTAL",    "BTAL_NAV, BTAL_SYNTH"),
     # TBILL_SYNTH: 13-week T-bill total return less BIL's fee, from
     # "TBILL SYNTH Daily Prices.csv". Replaced VFISX, a 1-3 year Treasury
     # fund, November 3, 2026. BIL is also the risk-free rate.
