@@ -3699,6 +3699,14 @@ BACKFILL_DEFAULTS = [
     # (PRIMARY_HISTORY_FROM). Replaced FJPNX, an actively managed unhedged
     # fund, November 3, 2026.
     ("DXJ",     "DXJ_HEDGED"),
+    # BTC-USD: Bitcoin's own price before IBIT's January 11, 2024 launch, less
+    # IBIT's 0.25% fee (BACKFILL_FEE_ANNUAL). For stress tests, type BTC_TAMED
+    # in its place: Bitcoin from January 2012 (Bitstamp, then BTC-USD) with
+    # 2012-2017 given 2021-2026's volatility and growth per unit of risk and
+    # BTC-USD unchanged from 2018, from "BTC TAMED Daily Prices.csv" (built by
+    # Basket Research\ETF Scouting\Tamed Bitcoin History 2026-11-04\Build Tamed
+    # Bitcoin.py). IBIT then joins in October 2012 from a 1995 start. Not the
+    # default. Added November 4, 2026.
     ("IBIT",    "BTC-USD"),
     ("",        ""),
     ("",        ""),
@@ -3709,7 +3717,9 @@ with st.sidebar.expander("Backfill Rules", expanded=False):
     st.caption(
         "Extend an asset's history using older ETFs or mutual funds. "
         "Enter the primary ticker on the left and its backfill chain on the right "
-        "(tried in order, oldest last). Leave blank rows if not needed."
+        "(tried in order, oldest last). Leave blank rows if not needed. "
+        "To stress-test Bitcoin, type BTC_TAMED in place of BTC-USD for IBIT: "
+        "Bitcoin from 2012 with its early growth and swings tamed to today's."
     )
     for slot in range(1, len(BACKFILL_DEFAULTS) + 1):
         default_primary, default_chain = BACKFILL_DEFAULTS[slot - 1]
