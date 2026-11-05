@@ -3704,26 +3704,46 @@ BACKFILL_DEFAULTS = [
     # fund, November 3, 2026.
     ("DXJ",     "DXJ_HEDGED"),
     # BTC-USD: Bitcoin's own price before IBIT's January 11, 2024 launch, less
-    # IBIT's 0.25% fee (BACKFILL_FEE_ANNUAL). For stress tests, type BTC_TAMED
-    # in its place: Bitcoin from January 2012 (Bitstamp, then BTC-USD) with
+    # IBIT's 0.25% fee (BACKFILL_FEE_ANNUAL). For stress tests, the "Bitcoin
+    # history" switch in Backfill Rules (BTC_HISTORY_OPTIONS) puts BTC_TAMED in
+    # its place: Bitcoin from January 2012 (Bitstamp, then BTC-USD) with
     # 2012-2017 given 2021-2026's volatility and growth per unit of risk and
     # BTC-USD unchanged from 2018, from "BTC TAMED Daily Prices.csv" (built by
     # Basket Research\ETF Scouting\Tamed Bitcoin History 2026-11-04\Build Tamed
     # Bitcoin.py). IBIT then joins in October 2012 from a 1995 start. Not the
-    # default. Added November 4, 2026.
+    # default. Added November 4, 2026; the switch the same night.
     ("IBIT",    "BTC-USD"),
     ("",        ""),
     ("",        ""),
 ]
 
+# The "Bitcoin history" switch at the top of Backfill Rules: each choice and
+# the chain it puts in the IBIT row. Real (None) leaves the row as typed,
+# BTC-USD by default. Tamed shows BTC_TAMED in the row, greyed out, and uses
+# it; switching back to Real resets the row to BTC-USD. Added November 4, 2026.
+BTC_HISTORY_OPTIONS = {
+    "Real (BTC-USD, from September 2014)": None,
+    "Tamed (BTC_TAMED, from January 2012)": "BTC_TAMED",
+}
+
 backfill_rules = {}
 with st.sidebar.expander("Backfill Rules", expanded=False):
+    btc_history = st.radio(
+        "Bitcoin history for IBIT, before its January 2024 launch",
+        list(BTC_HISTORY_OPTIONS),
+        index=0,
+        key="btc_history",
+        help=(
+            "Real: Bitcoin's own price (BTC-USD), from September 2014. Tamed: Bitcoin from "
+            "January 2012, with 2012-2017's swings and growth scaled down to 2021-2026's, "
+            "for stress tests. Both are charged IBIT's 0.25% fee."
+        ),
+    )
+    btc_history_chain = BTC_HISTORY_OPTIONS[btc_history]
     st.caption(
         "Extend an asset's history using older ETFs or mutual funds. "
         "Enter the primary ticker on the left and its backfill chain on the right "
-        "(tried in order, oldest last). Leave blank rows if not needed. "
-        "To stress-test Bitcoin, type BTC_TAMED in place of BTC-USD for IBIT: "
-        "Bitcoin from 2012 with its early growth and swings tamed to today's."
+        "(tried in order, oldest last). Leave blank rows if not needed."
     )
     for slot in range(1, len(BACKFILL_DEFAULTS) + 1):
         default_primary, default_chain = BACKFILL_DEFAULTS[slot - 1]
@@ -3736,12 +3756,22 @@ with st.sidebar.expander("Backfill Rules", expanded=False):
                 placeholder="Ticker",
             ).strip().upper()
         with cols[1]:
-            bf_chain = st.text_input(
-                f"Backfill chain {slot}",
-                value=default_chain,
-                key=f"bf_chain_{slot}",
-                placeholder="e.g. USCI, DBC",
-            )
+            if bf_primary == "IBIT" and btc_history_chain:
+                # A key of its own, so the row shows the switch's chain.
+                bf_chain = st.text_input(
+                    f"Backfill chain {slot}",
+                    value=btc_history_chain,
+                    key=f"bf_chain_{slot}_btc_history",
+                    disabled=True,
+                    help="Set by the Bitcoin history switch above.",
+                )
+            else:
+                bf_chain = st.text_input(
+                    f"Backfill chain {slot}",
+                    value=default_chain,
+                    key=f"bf_chain_{slot}",
+                    placeholder="e.g. USCI, DBC",
+                )
 
         if bf_primary:
             chain_list = [t.strip().upper() for t in bf_chain.split(",") if t.strip()]
