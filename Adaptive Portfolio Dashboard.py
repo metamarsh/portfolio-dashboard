@@ -366,6 +366,10 @@ MAIN_LOOKBACK_OPTIONS = {
     "6/8-month blend (50/50)":    ([6, 8],    [0.50, 0.50]),
     "1/8-month blend (50/50)":    ([1, 8],    [0.50, 0.50]),
     "2/8-month blend (50/50)":    ([2, 8],    [0.50, 0.50]),
+    # 2/7 added November 4, 2026 at Tyler's request: the best region in the
+    # main lookback re-check. Listed after 2/8 so the selectbox default
+    # (index=3, 2/8) is unchanged.
+    "2/7-month blend (50/50)":    ([2, 7],    [0.50, 0.50]),
     "2/11-month blend (50/50)":   ([2, 11],   [0.50, 0.50]),
 }
 
