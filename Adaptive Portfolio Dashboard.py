@@ -215,9 +215,13 @@ JOIN_WHEN_AVAILABLE = {"IBIT", "BTC-USD"}
 BACKFILL_FEE_ANNUAL = {
     "IBIT": 0.0025,   # iShares Bitcoin Trust, 0.25%/yr
     # GLDM (0.10%/yr) before its June 26, 2018 launch: GLD's prices already
-    # carry GLD's 0.40%/yr, so they get a 0.30%/yr credit; GOLD (Yahoo GC=F
-    # gold futures, no fund fee) before GLD's November 18, 2004 launch gets
-    # GLDM's 0.10%/yr. Added November 3, 2026.
+    # carry GLD's 0.40%/yr, so they get a 0.30%/yr credit; GOLD (the daily
+    # gold price in "GOLD Daily Prices.csv", a TradingView export from 1980;
+    # not a fund, so it carries no fee of its own) before GLD's November 18,
+    # 2004 launch is charged GLDM's 0.10%/yr. Added November 3, 2026. The
+    # export had filed each close under the previous calendar day (two days
+    # early after some US holidays from 2009), so its dates were moved one day
+    # later on November 7, 2026.
     "GLDM": {"GLD": -0.0030, "GOLD": 0.0010},
     # QQQ before March 1999: RYOCX (Rydex OTC, a Nasdaq-100 index fund, from
     # February 14, 1994) gets a 1.26%/yr credit, its measured shortfall to QQQ
@@ -292,9 +296,15 @@ DATA_ADJUSTMENT_NOTES = {
     ),
     "GLDM": (
         "Before its June 26, 2018 launch: GLD, credited 0.30% a year for GLD's higher fee, and before GLD's "
-        "November 18, 2004 launch, gold futures less GLDM's 0.10% fee."
+        "November 18, 2004 launch, the daily gold price less GLDM's 0.10% fee. That price series had filed "
+        "each close a day early; its dates were corrected on November 7, 2026, so backtests run before then "
+        "that start before 2006 differ."
     ),
-    "GLD": "Before its November 18, 2004 launch: gold futures, with no fund fee charged.",
+    "GLD": (
+        "Before its November 18, 2004 launch: the daily gold price, with no fund fee charged. That price "
+        "series had filed each close a day early; its dates were corrected on November 7, 2026, so backtests "
+        "run before then that start before 2006 differ."
+    ),
     "QQQ": (
         "Before its March 10, 1999 launch: Rydex's Nasdaq-100 index fund (RYOCX), credited 1.26% a year for "
         "its higher costs (correlation 0.999 with QQQ since 1999), and before February 1994 the Nasdaq-100 "
@@ -472,6 +482,12 @@ def load_local_index_data():
 
     Each CSV should have a Date index column and one or more price columns.
     Files must follow the naming pattern: '<TICKER> Daily Prices.csv'
+
+    Each date must be the trading day its close belongs to. An export stamped
+    with each session's opening evening (Sunday to Thursday) is a day early,
+    as GOLD Daily Prices.csv was until November 7, 2026. WTI Daily Prices.csv,
+    which no default uses, still is; GOLD's known limits after 2004 (holiday
+    rows, an open last bar) are listed in "Data Adjustments.md".
     """
     local_data = pd.DataFrame()
     if not os.path.isdir(LOCAL_INDEX_DIR):
@@ -776,9 +792,12 @@ def market_trading_dates(daily_prices):
     not trade -- roughly one month in four, since ~28% of calendar
     month-ends fall on a Saturday or Sunday.
 
-    Local index CSVs (GOLD, BAB, WTI) are synthetic 7-day series and are
-    excluded for the same reason -- they are not exchange-listed and would
-    otherwise vote weekend dates into the calendar.
+    Local index CSVs ('<TICKER> Daily Prices.csv') are excluded for the same
+    reason: they are not exchange-listed, and their dates need not be US
+    exchange days, so they would vote non-trading days into the calendar.
+    GOLD has closes on US exchange holidays, BAB has Saturday rows until 1952
+    (the NYSE's Saturday sessions), and WTI is still stamped a day early,
+    Sunday to Thursday, as GOLD was until November 7, 2026.
 
     Build the calendar from the remaining columns: every weekday on which
     at least one exchange-listed ticker printed a close. Falls back to the
@@ -3675,9 +3694,10 @@ BACKFILL_DEFAULTS = [
     # zero-coupon curve, from "TLT SYNTH Daily Prices.csv". Replaced VUSTX
     # (10+ year bonds, about 15% less duration) November 3, 2026.
     ("TLT",     "TLT_SYNTH"),
-    # GLDM: GLD's history before GLDM's June 26, 2018 launch, then GOLD (gold
-    # futures) before GLD's November 18, 2004 launch, both fee-adjusted to
-    # GLDM's 0.10% (BACKFILL_FEE_ANNUAL). The default since November 3, 2026.
+    # GLDM: GLD's history before GLDM's June 26, 2018 launch, then GOLD (the
+    # daily gold price; dates corrected November 7, 2026) before GLD's
+    # November 18, 2004 launch, both fee-adjusted to GLDM's 0.10%
+    # (BACKFILL_FEE_ANNUAL). The default since November 3, 2026.
     # Keep this row above GLD's: rules run in order, and GLDM's chain must
     # read GLD's own prices before GLD's rule extends them with GOLD.
     ("GLDM",    "GLD, GOLD"),
