@@ -348,6 +348,11 @@ DATA_ADJUSTMENT_NOTES = {
         "price moves (the Nikkei 225 index before 2004) plus modeled carry, calibrated to MNK's actual rolls "
         "in 2025-2026 (+52.35% against MNK's +52.07% over that year)."
     ),
+    "IEI": (
+        "Used by the G1 cash rule. Before its January 2007 launch: Vanguard Intermediate-Term Treasury "
+        "(VFITX, from October 1991), its daily returns chained onto IEI's first close with no fee "
+        "adjustment, as in the November 7, 2026 test of the rule."
+    ),
 }
 
 DEFAULT_EQUITY_ETFS = {
@@ -390,6 +395,30 @@ INITIAL_CAPITAL = 10_000
 # (adopted November 1, 2026, from the Signal Flip Tests). 0.0 reproduces the
 # earlier gross results exactly.
 DEFAULT_COST_PER_SIDE = 0.0005
+
+# G1 cash rule (added November 7, 2026, off by default). In a cash month (BIL
+# among the final holdings), move part of BIL's weight to an intermediate
+# Treasury fund while Treasury yields are falling and the fund's main score is
+# above BIL's. These defaults are the rule tested on November 7, 2026 as
+# "G1 f0.5 ab" (Suggestive there, not adopted): half of BIL's weight to IEI,
+# with VFITX before IEI's January 2007 launch, when the 5-year yield (^FVX) is
+# below its level 63 trading days earlier. The record:
+# C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System\Basket Research\ETF Scouting\Unconventional Ideas Test 2026-11-07\
+# The sidebar's G1 Cash Rule section turns it on and changes any setting.
+G1_DEFAULTS = {
+    "fund": "IEI",
+    "backfill": ["VFITX"],
+    "fraction": 0.5,
+    "yield_gate": True,
+    "yield_ticker": "^FVX",
+    "yield_lookback": 63,
+    "trend_gate": True,
+}
+G1_YIELD_OPTIONS = {
+    "^FVX": "5-year Treasury yield (^FVX)",
+    "^TNX": "10-year Treasury yield (^TNX)",
+    "^IRX": "13-week T-bill yield (^IRX)",
+}
 
 # ---- Brand colors (mirrors the Asymmetric Edge newsletter palette) ----
 # Series colors are consistent across every chart in the dashboard:
@@ -1004,6 +1033,90 @@ def compute_risk_parity_weights(daily_prices, selected_tickers, as_of_date, vol_
     return weights
 
 
+def apply_g1_cash_rule(weights, final_holdings, signal_date, g1, fund_bil_frame,
+                       daily_ffill, main_lookbacks, main_lookback_weights):
+    """
+    The G1 cash rule (added November 7, 2026; G1_DEFAULTS has the tested
+    settings). In a cash month, BIL among the final holdings, move a share
+    (g1["fraction"]) of BIL's weight to g1["fund"] when both gates pass:
+
+      yield gate  the yield (g1["yield_series"], daily closes) at the signal
+                  date is lower than g1["yield_lookback"] observations
+                  earlier. Its last close must fall within 7 days of the
+                  signal date.
+      trend gate  the fund's main score (the main lookback blend, from
+                  fund_bil_frame, the monthly closes of the fund and BIL as
+                  the caller ranks the basket) is above BIL's.
+
+    Either gate can be turned off (g1["yield_gate"], g1["trend_gate"]). The
+    fund needs a price at the signal date. It is added to the holdings, after
+    the ranked ones, and BIL stays in them even if its weight reaches 0, so a
+    holdings-gate leverage rule still sees a cash month.
+
+    Matches h_cashq in Ideas Harness.py (Unconventional Ideas Test
+    2026-11-07), the rule as tested.
+
+    Returns (weights, final_holdings, info). info["status"] is "in" when the
+    rule moved weight, otherwise "no cash", "no data", "yield not down" or
+    "fund below BIL"; info also carries the yields, scores and moved weight
+    it read.
+    """
+    info = {"status": "no cash"}
+    if "BIL" not in final_holdings or weights.get("BIL", 0.0) <= 0:
+        return weights, final_holdings, info
+    fund = g1["fund"]
+    if g1.get("yield_gate", True):
+        ys = g1.get("yield_series")
+        lag = int(g1.get("yield_lookback", 63))
+        v = ys.loc[:signal_date].dropna() if ys is not None else pd.Series(dtype=float)
+        if len(v) == 0 or (signal_date - v.index[-1]).days > 7 or len(v) < lag + 1:
+            info["status"] = "no data"
+            return weights, final_holdings, info
+        info["yield_now"], info["yield_then"] = float(v.iloc[-1]), float(v.iloc[-1 - lag])
+        if not (info["yield_now"] - info["yield_then"] < 0):
+            info["status"] = "yield not down"
+            return weights, final_holdings, info
+    if fund_bil_frame is None or fund not in daily_ffill.columns:
+        info["status"] = "no data"
+        return weights, final_holdings, info
+    if g1.get("trend_gate", True):
+        mom = compute_blended_momentum(fund_bil_frame, main_lookbacks, main_lookback_weights).iloc[-1]
+        info["fund_score"], info["bil_score"] = float(mom[fund]), float(mom["BIL"])
+        if not (np.isfinite(info["fund_score"]) and np.isfinite(info["bil_score"])):
+            info["status"] = "no data"  # the fund has too little history for a score yet
+            return weights, final_holdings, info
+        if not info["fund_score"] > info["bil_score"]:
+            info["status"] = "fund below BIL"
+            return weights, final_holdings, info
+    px = daily_ffill[fund].loc[:signal_date]
+    if len(px) == 0 or not np.isfinite(px.iloc[-1]):
+        info["status"] = "no data"
+        return weights, final_holdings, info
+    out = dict(weights)
+    move = float(g1.get("fraction", 0.5)) * out["BIL"]
+    out["BIL"] -= move
+    out[fund] = out.get(fund, 0.0) + move
+    holdings = list(final_holdings) if fund in final_holdings else list(final_holdings) + [fund]
+    info["status"], info["moved"] = "in", move
+    return out, holdings, info
+
+
+def g1_label(g1):
+    """One line describing a G1 cash rule setting, for the results log and notes."""
+    if not g1 or not g1.get("enabled"):
+        return "Off"
+    fund = g1.get("fund", G1_DEFAULTS["fund"])
+    parts = [f"{fund} gets {float(g1.get('fraction', 0.5)):.0%} of BIL's weight in cash months"]
+    gates = []
+    if g1.get("yield_gate", True):
+        gates.append(f"{g1.get('yield_ticker', G1_DEFAULTS['yield_ticker'])} is below its level "
+                     f"{int(g1.get('yield_lookback', 63))} trading days earlier")
+    if g1.get("trend_gate", True):
+        gates.append(f"{fund}'s main score is above BIL's")
+    parts.append(" when " + " and ".join(gates) if gates else ", with no gates")
+    return "".join(parts)
+
+
 def compute_leverage_signal(daily_prices, as_of_date, leverage_params,
                             final_holdings=None):
     """
@@ -1522,6 +1635,13 @@ def run_backtest(daily_prices, monthly_prices, params):
       before its trades, so the cost shows from the next day. 0 reproduces
       the gross results exactly. Matches net_path in Signal Flip
       Harness.py (Signal Flip Tests folder).
+
+    G1 cash rule (params["g1"], off unless "enabled"; added November 7,
+    2026): after the risk parity weights, apply_g1_cash_rule may move part of
+    BIL's weight to the G1 fund, which then counts as a holding for returns,
+    costs, leverage and the trade log. While the rule is on, the trade log
+    gains a "g1" column with each month's outcome. With it off, every output
+    is exactly what it was before the rule was added.
     """
     fixed_tickers = params["fixed_tickers"]
     equity_tickers = params["equity_tickers"]
@@ -1550,6 +1670,13 @@ def run_backtest(daily_prices, monthly_prices, params):
     # (the stricter, drawdown-friendly combination).
     btc_sma_gate = params.get("btc_sma_gate", {})
     btc_sma_gate_ticker = btc_sma_gate.get("ticker") if btc_sma_gate.get("enabled") else None
+
+    # G1 cash rule (see the docstring). Off unless enabled.
+    g1 = params.get("g1") or {}
+    g1_on = bool(g1.get("enabled"))
+    g1_fund = g1.get("fund") if g1_on else None
+    g1_has_fund = (g1_on and g1_fund in monthly_prices.columns and g1_fund in daily_prices.columns
+                   and "BIL" in monthly_prices.columns)
 
     min_lookback = max(main_lookbacks)
     valid_months = monthly_prices.index[min_lookback:]
@@ -1680,6 +1807,16 @@ def run_backtest(daily_prices, monthly_prices, params):
         weights = compute_risk_parity_weights(
             basket_daily, final_holdings, signal_date, vol_months
         )
+
+        # G1 cash rule: may move part of BIL's weight to the G1 fund.
+        g1_status = "off"
+        if g1_on:
+            weights, final_holdings, g1_info = apply_g1_cash_rule(
+                weights, final_holdings, signal_date, g1,
+                signal_monthly_frame([g1_fund, "BIL"]) if g1_has_fund else None,
+                daily_ffill, main_lookbacks, main_lookback_weights,
+            )
+            g1_status = g1_info["status"]
 
         # Exit execution day (entry was resolved at the top of the loop):
         #   "last_day"  -> close of the final trading day of the month
@@ -1845,6 +1982,7 @@ def run_backtest(daily_prices, monthly_prices, params):
             "equities_selected": ", ".join(selected_equities) if selected_equities else "N/A",
             "btc_gate": btc_gate_status,
             "btc_sma_gate": btc_sma_gate_status,
+            "g1": g1_status,
             "final_holdings": " | ".join(holdings_str_parts),
             "leverage": f"{lev_mult:.2f}x",
             "lev_regime": lev_regime,
@@ -1852,6 +1990,8 @@ def run_backtest(daily_prices, monthly_prices, params):
             "trading_cost": f"{trading_cost:.3%}",
             "portfolio_return": f"{port_return:+.2%}",
         })
+        if not g1_on:
+            del trade_log[-1]["g1"]  # the trade log keeps its columns with G1 off
 
     results_df = pd.DataFrame(results).set_index("date")
     trade_df = pd.DataFrame(trade_log)
@@ -1904,6 +2044,10 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
     btc_sma_gate = params.get("btc_sma_gate", {})
     btc_sma_gate_ticker = btc_sma_gate.get("ticker") if btc_sma_gate.get("enabled") else None
 
+    # G1 cash rule (see run_backtest), applied to this signal too.
+    g1 = params.get("g1") or {}
+    g1_fund = g1.get("fund") if g1.get("enabled") else None
+
     min_lookback = max(main_lookbacks)
 
     # Build basket
@@ -1943,7 +2087,7 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
 
     asset_details = []
     if full_details:
-        all_assets = list(set(fixed_tickers + equity_tickers))
+        all_assets = list(set(fixed_tickers + equity_tickers + ([g1_fund] if g1_fund else [])))
         all_assets = [t for t in all_assets if t in monthly_prices_local.columns]
 
         for t in all_assets:
@@ -1992,16 +2136,28 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
         daily_prices, final_holdings, signal_date, vol_months
     )
 
+    g1_info = None
+    if g1_fund:
+        g1_frame = None
+        if g1_fund in monthly_prices_local.columns and "BIL" in monthly_prices_local.columns:
+            g1_frame = monthly_prices_local[[g1_fund, "BIL"]].loc[:signal_date]
+        weights, final_holdings, g1_info = apply_g1_cash_rule(
+            weights, final_holdings, signal_date, g1, g1_frame,
+            daily_prices.ffill(), main_lookbacks, main_lookback_weights,
+        )
+
     if full_details:
         for row in asset_details:
             t = row["Asset"]
             row["Selected"] = t in final_holdings
             row["Weight"] = weights.get(t, 0.0) if t in final_holdings else 0.0
             row["Equity Pick"] = t in selected_equities
+            if g1_fund:
+                row["G1 Fund"] = t == g1_fund
 
         asset_details.sort(key=lambda x: x.get("Blended Score", -999), reverse=True)
 
-    return {
+    out = {
         "signal_date": signal_date,
         "asset_details": asset_details,
         "selected_equities": selected_equities,
@@ -2009,6 +2165,9 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
         "weights": weights,
         "basket": basket,
     }
+    if g1_fund:
+        out["g1_info"] = g1_info
+    return out
 
 
 def compute_equity_subselection_details(daily_prices, monthly_prices_local,
@@ -2422,6 +2581,7 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
         "Leverage": lev_summary,
         "BTC Gate": bg_summary,
         "BTC SMA Gate": sg_summary,
+        "G1 Cash Rule": g1_label(params.get("g1")),
         "Backtest Start": params["backtest_start"],
         "Backtest End": params.get("backtest_end", ""),
         "Period": strat_metrics.get("Period", ""),
@@ -3450,6 +3610,106 @@ with st.sidebar.expander("Bitcoin SMA Cross Gate", expanded=False):
             "timeframe": "daily",
         }
 
+# ---- G1 CASH RULE ----
+# Off by default (added November 7, 2026). The defaults are the tested rule
+# (G1_DEFAULTS); every setting can be changed here to explore it.
+g1_ui = {"enabled": False}
+with st.sidebar.expander("G1 Cash Rule", expanded=False):
+    st.caption(
+        "In months when the strategy holds BIL (cash), move part of BIL's weight "
+        "to an intermediate Treasury fund, but only while Treasury yields are "
+        "falling and the fund's main score is above BIL's. The defaults are the "
+        "rule tested on November 7, 2026: half of BIL's weight to IEI when the "
+        "5-year yield is below its level 63 trading days earlier. That test "
+        "rated it Suggestive (a small, consistent gain, earned mostly in the "
+        "1998, 2000-01 and 2008 sell-offs), and it is not part of the strategy."
+    )
+
+    g1_on = st.checkbox(
+        "Enable G1 cash rule",
+        value=False,
+        key="g1_on",
+    )
+
+    if g1_on:
+        g1_fund_ui = st.text_input(
+            "Fund that takes part of BIL's weight",
+            value=G1_DEFAULTS["fund"],
+            key="g1_fund",
+            help="IEI is the iShares 3-7 Year Treasury Bond ETF. Any fund with "
+                 "prices works; it is held only in months the rule acts, and "
+                 "does not compete for a basket slot.",
+        ).strip().upper() or G1_DEFAULTS["fund"]
+
+        g1_backfill_ui = st.text_input(
+            "Its backfill chain (before the fund's launch)",
+            value=", ".join(G1_DEFAULTS["backfill"]),
+            key="g1_backfill",
+            help="VFITX (Vanguard Intermediate-Term Treasury, from October "
+                 "1991) carries IEI before its January 2007 launch. Leave "
+                 "blank to use the fund's own prices only. A row for the same "
+                 "fund under Backfill Rules takes precedence.",
+        )
+
+        g1_fraction_pct = st.slider(
+            "Share of BIL's weight moved",
+            min_value=5,
+            max_value=100,
+            value=int(round(G1_DEFAULTS["fraction"] * 100)),
+            step=5,
+            format="%d%%",
+            key="g1_fraction",
+            help="The tested rule moves 50%. The November 7 test also ran 25% "
+                 "and 100%.",
+        )
+
+        g1_yield_gate = st.checkbox(
+            "Yield gate: only while the Treasury yield is falling",
+            value=G1_DEFAULTS["yield_gate"],
+            key="g1_yield_gate",
+        )
+        g1_yield_ticker = G1_DEFAULTS["yield_ticker"]
+        g1_yield_lookback = G1_DEFAULTS["yield_lookback"]
+        if g1_yield_gate:
+            g1_yield_ticker = st.selectbox(
+                "Yield",
+                options=list(G1_YIELD_OPTIONS),
+                index=list(G1_YIELD_OPTIONS).index(G1_DEFAULTS["yield_ticker"]),
+                format_func=lambda k: G1_YIELD_OPTIONS[k],
+                key="g1_yield_ticker",
+            )
+            g1_yield_lookback = st.number_input(
+                "Falling over the last N trading days",
+                min_value=5,
+                max_value=252,
+                value=G1_DEFAULTS["yield_lookback"],
+                step=1,
+                key="g1_yield_lookback",
+                help="The yield at the signal date must be below its level N "
+                     "trading days earlier. 63 is about three months.",
+            )
+
+        g1_trend_gate = st.checkbox(
+            "Trend gate: only while the fund's main score is above BIL's",
+            value=G1_DEFAULTS["trend_gate"],
+            key="g1_trend_gate",
+            help="The fund's score on the main lookback blend, computed as for "
+                 "the basket. In 2022-2023 this gate kept the rule out of "
+                 "intermediate Treasuries while they were still falling.",
+        )
+
+        g1_ui = {
+            "enabled": True,
+            "fund": g1_fund_ui,
+            "backfill": [t.strip().upper() for t in g1_backfill_ui.split(",") if t.strip()],
+            "fraction": g1_fraction_pct / 100.0,
+            "yield_gate": bool(g1_yield_gate),
+            "yield_ticker": g1_yield_ticker,
+            "yield_lookback": int(g1_yield_lookback),
+            "trend_gate": bool(g1_trend_gate),
+        }
+        st.caption("Rule: " + g1_label(g1_ui) + ".")
+
 # ---- RUN BACKTEST (second position) ----
 st.sidebar.markdown("---")
 run_button = st.sidebar.button("Run Backtest", type="primary", use_container_width=True)
@@ -3890,6 +4150,20 @@ if run_button:
         )
         if leverage_enabled and leverage_params_ui.get("method") == "vt_trend" and leverage_params_ui.get("ticker"):
             all_tickers_needed.append(leverage_params_ui["ticker"])
+        # G1 cash rule: its fund, and the fund's backfill chain unless a
+        # Backfill Rules row already covers that fund.
+        if g1_ui.get("enabled"):
+            all_tickers_needed.append(g1_ui["fund"])
+            _g1_in_basket = g1_ui["fund"] in selected_fixed or g1_ui["fund"] in selected_equity
+            if g1_ui["fund"] not in backfill_rules and g1_ui.get("backfill"):
+                if _g1_in_basket:
+                    # Never change a basket asset's own history from the G1 section.
+                    st.info(
+                        f"{g1_ui['fund']} is also in the basket, so the G1 cash rule uses its basket "
+                        f"history; set its backfill under Backfill Rules."
+                    )
+                else:
+                    backfill_rules[g1_ui["fund"]] = list(g1_ui["backfill"])
         for bf_chain in backfill_rules.values():
             all_tickers_needed.extend(bf_chain)
         # Pass as tuple for cache hashability
@@ -4107,6 +4381,40 @@ if run_button:
                             }
                             btc_sma_gate_state_for_display = sma_gate_state
 
+                # ---- G1 CASH RULE (load the yield series once) ----
+                g1_config = {"enabled": False}
+                if g1_ui.get("enabled"):
+                    g1_fund_run = g1_ui["fund"]
+                    if g1_fund_run == "BIL":
+                        st.warning("The G1 cash rule needs a fund other than BIL; G1 is off for this run.")
+                    elif g1_fund_run not in daily_prices.columns or daily_prices[g1_fund_run].dropna().empty:
+                        st.warning(
+                            f"The G1 cash rule is on, but there are no prices for {g1_fund_run}; "
+                            f"G1 is off for this run."
+                        )
+                    else:
+                        g1_yield_series = None
+                        if g1_ui["yield_gate"]:
+                            with st.spinner(f"Loading {g1_ui['yield_ticker']} for the G1 yield gate..."):
+                                g1_yield_ohlc = download_gate_ohlc(
+                                    g1_ui["yield_ticker"], download_start, force_refresh=force_refresh
+                                )
+                            if g1_yield_ohlc is not None and not g1_yield_ohlc.empty:
+                                g1_yield_series = g1_yield_ohlc["Close"].dropna()
+                        if g1_ui["yield_gate"] and (g1_yield_series is None or g1_yield_series.empty):
+                            st.warning(
+                                f"Could not load {g1_ui['yield_ticker']} for the G1 yield gate; "
+                                f"G1 is off for this run."
+                            )
+                        else:
+                            g1_config = {**g1_ui, "yield_series": g1_yield_series}
+                            _g1_first = daily_prices[g1_fund_run].dropna().index.min()
+                            if _g1_first > required_by:
+                                st.info(
+                                    f"{g1_fund_run} has prices from {_g1_first:%B %d, %Y}, so the G1 "
+                                    f"cash rule can act only from then."
+                                )
+
                 params = {
                     "fixed_tickers": selected_fixed,
                     "equity_tickers": selected_equity,
@@ -4128,6 +4436,7 @@ if run_button:
                     "leverage_params": leverage_params_ui,
                     "btc_gate": btc_gate_config,
                     "btc_sma_gate": btc_sma_gate_config,
+                    "g1": g1_config,
                 }
 
                 with st.spinner("Running backtest..."):
@@ -4534,6 +4843,34 @@ if run_button:
                                 sma_gate_line += "  (excluded from the basket)"
                             st.markdown(sma_gate_line)
 
+                        # Current G1 cash rule signal
+                        if g1_config.get("enabled"):
+                            _g1i = signals.get("g1_info") or {}
+                            _g1s = _g1i.get("status", "no data")
+                            _g1f = g1_config["fund"]
+                            _g1_words = {
+                                "in": f"in: {_g1i.get('moved', 0.0):.2%} of the portfolio moves from BIL to {_g1f}",
+                                "no cash": "not a cash month (BIL not held)",
+                                "yield not down": "out: the yield is not falling",
+                                "fund below BIL": f"out: {_g1f}'s score is not above BIL's",
+                                "no data": "no data at this date",
+                            }
+                            _g1_emoji = {"in": "🟢", "yield not down": "🔴", "fund below BIL": "🔴"}.get(_g1s, "⚪")
+                            g1_line = f"**G1 cash rule:** {_g1_emoji} {_g1_words.get(_g1s, _g1s)}"
+                            _g1_bits = []
+                            if "yield_now" in _g1i:
+                                _g1_bits.append(
+                                    f"{g1_config['yield_ticker']} {_g1i['yield_now']:.2f} vs "
+                                    f"{_g1i['yield_then']:.2f} {g1_config['yield_lookback']} trading days earlier"
+                                )
+                            if "fund_score" in _g1i:
+                                _g1_bits.append(
+                                    f"{_g1f} score {_g1i['fund_score']:.2%} vs BIL {_g1i['bil_score']:.2%}"
+                                )
+                            if _g1_bits:
+                                g1_line += "  ·  " + "  ·  ".join(_g1_bits)
+                            st.markdown(g1_line)
+
                         # Details table
                         details = signals["asset_details"]
                         vol_months_label = f"{params['vol_months']}mo Vol (ann)"
@@ -4577,6 +4914,8 @@ if run_button:
                             name = row["Asset"]
                             if row.get("Equity Pick"):
                                 name = f'<span class="sig-equity">{name} (eq)</span>'
+                            elif row.get("G1 Fund"):
+                                name = f"{name} (G1)"
                             sig_html.append(f'<td><strong>{name}</strong></td>')
 
                             # Lookback returns
@@ -4856,6 +5195,8 @@ if run_button:
                                 f"rf {btc_sma_gate_config['rf_len']}d/"
                                 f"{btc_sma_gate_config['rf_period']}d"
                             )
+                        if g1_config.get("enabled"):
+                            st.markdown(f"**G1 cash rule:** {g1_label(g1_config)}")
 
                     # ---- BACKFILL DETAILS & DATA NOTES (at end of dashboard) ----
                     if backfill_info:
@@ -4868,6 +5209,7 @@ if run_button:
                         list(selected_fixed)
                         + (list(selected_equity) if equity_top_n > 0 else [])
                         + [c["ticker"] for c in BAL_BENCHMARKS]
+                        + ([g1_config["fund"]] if g1_config.get("enabled") else [])
                     ))
                     _adj_assets = [t for t in _run_assets if t in DATA_ADJUSTMENT_NOTES]
                     if _adj_assets:
@@ -4875,6 +5217,8 @@ if run_button:
                             p.strip().upper(): [x.strip().upper() for x in c.split(",") if x.strip()]
                             for p, c in BACKFILL_DEFAULTS if p.strip()
                         }
+                        # The G1 fund's default chain lives in G1_DEFAULTS.
+                        _default_chains.setdefault(G1_DEFAULTS["fund"], list(G1_DEFAULTS["backfill"]))
                         with st.expander("Data adjustments (why some histories are stand-ins or repaired)"):
                             st.caption(
                                 "The table above shows which source covers which dates; these notes say why. "
@@ -4951,6 +5295,13 @@ if run_button:
                             f"bars as a conversion of the original 8-hour strategy). When both "
                             f"Bitcoin gates are enabled, the ticker must pass both."
                         )
+                    g1_note = ""
+                    if g1_config.get("enabled"):
+                        g1_note = (
+                            f" G1 cash rule: {g1_label(g1_config)}, read at the same signal "
+                            f"date as the rest of the allocation (not part of the strategy; "
+                            f"the trade log's g1 column gives each month's outcome)."
+                        )
                     if exec_timing == "last_day":
                         exec_note = (
                             "Allocations computed from the close of the trading day before "
@@ -4969,6 +5320,7 @@ if run_button:
                         + lev_note
                         + gate_note
                         + sma_gate_note
+                        + g1_note
                     )
 
 else:
