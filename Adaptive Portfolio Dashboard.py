@@ -45,6 +45,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
+import json
 import os
 import sys
 from datetime import datetime
@@ -461,6 +462,8 @@ _base_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in dir() el
 RESULTS_FILE = os.path.join(_base_dir, "Backtest Results Log.xlsx")
 CACHE_DIR = os.path.join(_base_dir, "price_cache")
 CACHE_FILE = os.path.join(CACHE_DIR, "daily_prices.csv")
+# How far back each ticker was downloaded (see load_cache_meta).
+CACHE_META_FILE = os.path.join(CACHE_DIR, "cache_meta.json")
 LOCAL_INDEX_DIR = _base_dir  # Local index CSVs live alongside the dashboard
 
 
@@ -483,6 +486,29 @@ def save_price_cache(df):
     """Save daily prices to the local disk cache."""
     os.makedirs(CACHE_DIR, exist_ok=True)
     df.to_csv(CACHE_FILE)
+
+
+def load_cache_meta():
+    """How far back each cached ticker was downloaded: {ticker: "YYYY-MM-DD"}.
+
+    Read from price_cache/cache_meta.json, which download_data writes after a
+    full download (added November 7, 2026). A fund that launched after that
+    date has no earlier history to find, so its series counts as complete
+    from that date. Empty if the file is missing or unreadable.
+    """
+    try:
+        with open(CACHE_META_FILE, "r", encoding="utf-8") as fh:
+            got = json.load(fh).get("downloaded_from", {})
+        return {str(k): str(v) for k, v in got.items()} if isinstance(got, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_cache_meta(downloaded_from):
+    """Write the download record that load_cache_meta reads."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with open(CACHE_META_FILE, "w", encoding="utf-8") as fh:
+        json.dump({"downloaded_from": dict(sorted(downloaded_from.items()))}, fh, indent=1)
 
 
 def get_cache_info():
@@ -602,6 +628,20 @@ class MissingPriceDataError(RuntimeError):
     index file. Raised so a run stops instead of dropping the ticker silently."""
 
 
+# download_data's update step (November 7, 2026). The recent download starts
+# UPDATE_OVERLAP_DAYS calendar days before each ticker's last cached date.
+# Cached days up to PROVISIONAL_DAYS before that date count as settled: over
+# them, the recent prices' ratio to the cached ones must agree to within
+# RESCALE_TOLERANCE, and their median rescales the cached history when it
+# differs from 1 by more than that. A dividend or split moves the ratio far
+# more (BIL's monthly dividend, about 3e-3); Yahoo's rounding, a few parts in
+# a million. The last PROVISIONAL_DAYS take the recent prices, since a close
+# saved during a session, or one Yahoo left blank, may since have changed.
+UPDATE_OVERLAP_DAYS = 30
+PROVISIONAL_DAYS = 5
+RESCALE_TOLERANCE = 1e-5
+
+
 def download_data(tickers_tuple, start_date_str, force_refresh=False):
     """
     Download adjusted close prices for a list of tickers, using a local
@@ -609,8 +649,12 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
 
     On the first run, all data is fetched from Yahoo Finance and saved
     to price_cache/daily_prices.csv. On later runs, only missing tickers
-    and recent dates are downloaded. Set force_refresh=True to ignore
-    the cache and re-download everything.
+    and recent dates are downloaded. price_cache/cache_meta.json records
+    how far back each ticker was downloaded, so a fund that launched after
+    the download start still counts as complete, and the cached history is
+    lined up with the recent download so a dividend paid in between isn't
+    lost (both November 7, 2026; see the update step). Set
+    force_refresh=True to ignore the cache and re-download everything.
 
     Tickers that match a local index CSV file (e.g., QCI) are loaded
     from disk and never sent to Yahoo Finance.
@@ -632,6 +676,7 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
     # --- Yahoo Finance portion (only for non-local tickers) ---
     cached = pd.DataFrame() if force_refresh else load_price_cache()
     start_date = pd.Timestamp(start_date_str)
+    downloaded_from = {} if force_refresh else load_cache_meta()
 
     needs_full_download = []
     needs_update = []
@@ -643,10 +688,23 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
             series = cached[t].dropna()
             if series.empty:
                 needs_full_download.append(t)
-            elif series.index.min() > start_date + pd.Timedelta(days=7):
-                needs_full_download.append(t)
             else:
-                needs_update.append(t)
+                # A fund that launched after the download start never has
+                # history back to it, so its first date alone marked it
+                # incomplete on every run: until November 7, 2026, 20 of the
+                # default run's tickers were re-downloaded in full each time.
+                # The series is complete from the earliest date it was
+                # downloaded from, when that is earlier.
+                covered_from = series.index.min()
+                if t in downloaded_from:
+                    try:
+                        covered_from = min(covered_from, pd.Timestamp(downloaded_from[t]))
+                    except (ValueError, TypeError):
+                        pass
+                if covered_from > start_date + pd.Timedelta(days=7):
+                    needs_full_download.append(t)
+                else:
+                    needs_update.append(t)
 
     total_to_fetch = len(needs_full_download) + (1 if needs_update else 0)
     if total_to_fetch > 0:
@@ -665,6 +723,70 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
 
     progress = st.sidebar.empty()
     progress.caption(status_msg)
+
+    # The update step (rewritten November 7, 2026). Yahoo's adjusted closes are
+    # back-adjusted: each dividend or split lowers a fund's whole earlier
+    # history by one factor. Until November 7, 2026 new days were added to the
+    # cache without rescaling, so a dividend paid between two downloads was
+    # lost at the join. Now each cached series is compared with the recent
+    # download over its settled days (see UPDATE_OVERLAP_DAYS). If the ratio
+    # agrees there, the cached history is rescaled by it, and the recent
+    # prices replace the cached ones over the provisional days and add the new
+    # ones (a blank recent close keeps the cached value, as on 2026-09-29, when
+    # Yahoo left a close blank for hours). If the two disagree, or share no
+    # settled day, the ticker takes a full download instead.
+    updated = {}
+    if needs_update:
+        last_cached = {t: cached[t].last_valid_index() for t in needs_update}
+        update_from = (min(last_cached.values())
+                       - pd.Timedelta(days=UPDATE_OVERLAP_DAYS)).strftime("%Y-%m-%d")
+        delta_dl = pd.DataFrame()
+        data = yf.download(
+            needs_update, start=update_from,
+            auto_adjust=True, progress=False
+        )
+        if not data.empty:
+            if isinstance(data.columns, pd.MultiIndex):
+                delta_dl = data["Close"]
+            else:
+                delta_dl = data[["Close"]]
+                if len(needs_update) == 1:
+                    delta_dl.columns = needs_update
+        no_recent, redo = [], []
+        for t in needs_update:
+            old = cached[t].dropna()
+            new = delta_dl[t].dropna() if t in delta_dl.columns else pd.Series(dtype=float)
+            if new.empty:
+                updated[t] = old
+                no_recent.append(t)
+                continue
+            settled_to = last_cached[t] - pd.Timedelta(days=PROVISIONAL_DAYS)
+            window = old.index[(old.index >= last_cached[t] - pd.Timedelta(days=UPDATE_OVERLAP_DAYS))
+                               & (old.index <= settled_to)]
+            shared = window.intersection(new.index)
+            ratio = new.loc[shared] / old.loc[shared]
+            if len(shared) == 0 or ratio.max() / ratio.min() - 1.0 > RESCALE_TOLERANCE:
+                redo.append(t)
+                continue
+            factor = float(ratio.median())
+            if abs(factor - 1.0) > RESCALE_TOLERANCE:
+                old = old * factor
+            updated[t] = new[new.index > settled_to].combine_first(old)
+        if redo:
+            print(f"download_data: full download for {', '.join(redo)}, whose recent prices "
+                  f"don't line up with the cached ones", file=sys.stderr, flush=True)
+            needs_full_download.extend(redo)
+        if no_recent:
+            # During a Yahoo outage the recent download can come back empty
+            # (as full downloads did on November 1, 2026): keep the cache and say so.
+            last_dates = sorted({last_cached[t].strftime("%Y-%m-%d") for t in no_recent})
+            stale_msg = (
+                f"Yahoo Finance returned no recent prices for {', '.join(no_recent)}, so the "
+                f"cached series {'is' if len(no_recent) == 1 else 'are'} used as is "
+                f"(last cached date {', '.join(last_dates)})."
+            )
+            st.warning(stale_msg)
+            print("WARNING: " + stale_msg, file=sys.stderr, flush=True)
 
     full_dl = pd.DataFrame()
     if needs_full_download:
@@ -706,37 +828,13 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
             st.warning(fallback_msg)
             print("WARNING: " + fallback_msg, file=sys.stderr, flush=True)
 
-    delta_dl = pd.DataFrame()
-    if needs_update:
-        latest_cached = cached[needs_update].dropna(how="all").index.max()
-        update_from = (latest_cached - pd.Timedelta(days=5)).strftime("%Y-%m-%d")
-        data = yf.download(
-            needs_update, start=update_from,
-            auto_adjust=True, progress=False
-        )
-        if not data.empty:
-            if isinstance(data.columns, pd.MultiIndex):
-                delta_dl = data["Close"]
-            else:
-                delta_dl = data[["Close"]]
-                if len(needs_update) == 1:
-                    delta_dl.columns = needs_update
-
     result = pd.DataFrame()
 
-    if needs_update and not cached.empty:
-        result = cached[[t for t in needs_update if t in cached.columns]].copy()
-        if not delta_dl.empty:
-            new_dates = delta_dl.index.difference(result.index)
-            if len(new_dates) > 0:
-                result = pd.concat([result, delta_dl.loc[new_dates]])
-            overlap = delta_dl.index.intersection(result.index)
-            if len(overlap) > 0:
-                # Keep the cached value wherever Yahoo returns a blank for an
-                # overlapping date (on 2026-09-29 Yahoo left the day's close blank
-                # for hours), so a flaky download never erases good cached data.
-                result.loc[overlap, delta_dl.columns] = delta_dl.loc[overlap].combine_first(
-                    result.loc[overlap, delta_dl.columns])
+    if updated:
+        idx = cached.index
+        for s in updated.values():
+            idx = idx.union(s.index)
+        result = pd.DataFrame({t: s.reindex(idx) for t, s in updated.items()}, index=idx)
 
     if not full_dl.empty:
         if result.empty:
@@ -790,6 +888,19 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
             save_price_cache(merged.sort_index())
         else:
             save_price_cache(yahoo_result)
+        # Record how far back each full download reached (see load_cache_meta).
+        for t in needs_full_download:
+            if t in fell_back or t not in full_dl.columns or full_dl[t].dropna().empty:
+                continue
+            had = not cached.empty and t in cached.columns and not cached[t].dropna().empty
+            reach = start_date
+            if had and t in downloaded_from:
+                try:
+                    reach = min(reach, pd.Timestamp(downloaded_from[t]))
+                except (ValueError, TypeError):
+                    pass
+            downloaded_from[t] = reach.strftime("%Y-%m-%d")
+        save_cache_meta(downloaded_from)
 
     progress.caption(f"Cache: {len(unique_tickers)} tickers loaded ({len(local_tickers)} from local files).")
 
