@@ -2545,6 +2545,13 @@ def compute_metrics(monthly_returns, rf_monthly=None, daily_equity=None):
 
     calmar = cagr / abs(max_dd) if max_dd != 0 else 0.0
 
+    # Ulcer Index and Martin ratio (Peter Martin's Ulcer Performance Index),
+    # from the same month-end drawdowns as Calmar: the root mean square of
+    # the drawdown in every month, and the return above the risk-free rate
+    # divided by it. Added November 8, 2026.
+    ulcer_index = float(np.sqrt(np.mean(drawdown.values ** 2)))
+    martin = (cagr - rf_annual) / ulcer_index if ulcer_index > 0 else 0.0
+
     # Daily max drawdown (if daily equity curve provided)
     if daily_equity is not None and len(daily_equity) > 0:
         daily_peak = daily_equity.cummax()
@@ -2622,6 +2629,8 @@ def compute_metrics(monthly_returns, rf_monthly=None, daily_equity=None):
         "Best Month": best_month,
         "Best Month Date": best_month_date,
         "Calmar Ratio": calmar,
+        "Ulcer Index": ulcer_index,
+        "Martin Ratio": martin,
         "Best Year": best_year,
         "Worst Year": worst_year,
         "Win Rate (monthly)": win_rate,
@@ -2703,6 +2712,7 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
         "Max Drawdown": strat_metrics.get("Max Drawdown", 0),
         "Max DD (Daily)": strat_metrics.get("Max Drawdown (Daily)", 0),
         "Calmar": strat_metrics.get("Calmar Ratio", 0),
+        "Martin": strat_metrics.get("Martin Ratio", 0),
         "Best Year": strat_metrics.get("Best Year", 0),
         "Worst Year": strat_metrics.get("Worst Year", 0),
         "Win Rate": strat_metrics.get("Win Rate (monthly)", 0),
@@ -4723,7 +4733,34 @@ if run_button:
                         d = f"{ts.strftime('%b')} {ts.day}, {ts.year}"
                         return d, (f"Week ending {d}" if kind == "week" else d)
 
+                    # Plain-language hover explanations for the three ratios
+                    # (added November 8, 2026).
+                    RATIO_TIPS = {
+                        "Sortino Ratio": (
+                            "Return per unit of bad volatility. It takes the yearly return above "
+                            "cash (BIL) and divides it by how large the losing months typically "
+                            "are. Gains don't count against it, only losses. Higher is better."
+                        ),
+                        "Calmar Ratio": (
+                            "Return per unit of worst loss. It divides the yearly growth rate by "
+                            "the deepest peak-to-trough drop (on month-end values). A Calmar of 1 "
+                            "means a year's return about equals the worst drawdown. It rests on "
+                            "that one episode, so it can jump when a single bad stretch changes. "
+                            "Higher is better."
+                        ),
+                        "Martin Ratio": (
+                            "Return per unit of drawdown pain. It divides the yearly return above "
+                            "cash (BIL) by the Ulcer Index, which measures how far below its last "
+                            "high the portfolio sat in every month. So it counts how deep and how "
+                            "long every drawdown was, not just the worst one, and is steadier "
+                            "than Calmar. Higher is better."
+                        ),
+                    }
+
                     def metric_row(name, key, fmt, bold, date_key=None, date_kind=None):
+                        if name in RATIO_TIPS:
+                            name = (f'<span class="mt-tip">{name}<span class="mt-i">i</span>'
+                                    f'<span class="mt-tipbox">{RATIO_TIPS[name]}</span></span>')
                         vals = []
                         for _, m in metric_cols:
                             v = fmt(m.get(key, 0))
@@ -4748,6 +4785,7 @@ if run_button:
                         metric_row("Worst Month",       "Worst Month",         fmt_pct,    False, "Worst Month Date", "month"),
                         metric_row("Best Month",        "Best Month",          fmt_pct,    False, "Best Month Date",  "month"),
                         metric_row("Calmar Ratio",      "Calmar Ratio",        fmt_ratio,  False),
+                        metric_row("Martin Ratio",      "Martin Ratio",        fmt_ratio,  False),
                         metric_row("Annualized Vol",    "Annualized Vol",      fmt_pct,    False),
                         metric_row("Best Year",         "Best Year",           fmt_pct,    False),
                         metric_row("Worst Year",        "Worst Year",          fmt_pct,    False),
@@ -4773,6 +4811,10 @@ if run_button:
                         '.metrics-table tbody tr:hover { background-color: #f7f5fb; }',
                         '.metrics-table .bold-row td { font-weight: 700; color: #484848; }',
                         '.metrics-table tbody td .cell-date { display: block; font-size: 11px; font-weight: 400; color: #777788; margin-top: 2px; letter-spacing: 0.01em; }',
+                        '.metrics-table .mt-tip { position: relative; cursor: help; }',
+                        '.metrics-table .mt-i { display: inline-block; width: 14px; height: 14px; line-height: 14px; margin-left: 6px; border-radius: 50%; border: 1px solid #9a8fc4; color: #6a5aa8; font-size: 10px; font-weight: 600; font-style: italic; text-align: center; vertical-align: 1px; }',
+                        '.metrics-table .mt-tipbox { visibility: hidden; opacity: 0; position: absolute; left: 0; top: 130%; z-index: 1000; width: 300px; padding: 10px 12px; background: #2b2540; color: #ffffff; font-size: 12.5px; font-weight: 400; line-height: 1.45; text-align: left; border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,0.18); transition: opacity 0.12s; white-space: normal; }',
+                        '.metrics-table .mt-tip:hover .mt-tipbox { visibility: visible; opacity: 1; }',
                         '</style>',
                         '<table class="metrics-table">',
                         f'<thead><tr><th>Metric</th>{header_cells}</tr></thead>',
