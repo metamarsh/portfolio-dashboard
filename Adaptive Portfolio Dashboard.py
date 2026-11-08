@@ -852,6 +852,13 @@ def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers,
     BTC-USD would otherwise hand the ETF weekend closes it could never have
     printed, and would put weekend dates back into the trading calendar.
 
+    A primary with no prices of its own is built from its first available
+    source on the same terms: masked to the calendar, and charged the fee
+    anchored at that source's last date. IBIT's rule runs this way, from
+    BTC-USD, whenever IBIT isn't ticked, because the UI downloads every
+    chain ticker. Before November 7, 2026 this case skipped the mask and the
+    fee, so BTC-USD's weekday US holidays entered no-IBIT runs' calendar.
+
     Returns the spliced series and a list of segment descriptions.
     """
     is_crypto_primary = str(primary_ticker).upper().endswith("-USD")
@@ -881,7 +888,16 @@ def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers,
 
         combined_valid = combined.dropna()
         if combined_valid.empty:
-            # No primary data at all, just use this backfill directly
+            # No primary data at all: this backfill is the whole series, with
+            # a spliced segment's calendar mask and fee (see the docstring).
+            if calendar is not None:
+                bf_series = bf_series[bf_series.index.isin(calendar)]
+                if bf_series.empty:
+                    continue
+            fee = fee_annual.get(bf_ticker, 0.0) if isinstance(fee_annual, dict) else fee_annual
+            if fee:
+                yrs = (bf_series.index.max() - bf_series.index).days / 365.25
+                bf_series = bf_series / ((1.0 - fee) ** yrs)
             combined = bf_series.reindex(daily_prices.index)
             segments.insert(0, (bf_ticker, bf_series.index.min(), bf_series.index.max()))
             continue
