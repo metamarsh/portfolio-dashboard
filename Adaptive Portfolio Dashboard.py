@@ -1519,18 +1519,24 @@ def compute_leverage_signal(daily_prices, as_of_date, leverage_params,
 
 
 # =============================================================================
-# BITCOIN TREND GATE (Radius Trend filter)
+# DAILY OHLC DOWNLOADS, AND THE BITCOIN SIGNAL FORMULAS KEPT FOR RESEARCH
 # =============================================================================
+# The Bitcoin trend gate and SMA cross gate were removed from the app on
+# November 13, 2026: the November 4, 2026 IBIT keep, gate or drop test found
+# that both trail plain IBIT. Their two signal formulas,
+# compute_radius_trend_state and compute_sma_cross_state, stay below, unused
+# by the app, because research scripts load them from this file (the IBIT
+# test's IBIT Harness.py and the Main Lookback Recheck's Lookback Harness.py).
 
 def download_gate_ohlc(ticker, start_date_str, force_refresh=False):
     """
-    Download daily OHLC for a single trend-gate ticker (e.g. BTC-USD),
-    used only to compute the Bitcoin trend gate. The main price cache keeps
-    adjusted close only, so the gate needs high/low fetched separately.
-    Cached on its own in price_cache/gate_ohlc_<ticker>.csv. Returns a
-    DataFrame with High, Low, Close columns (daily), or an empty DataFrame
-    on failure. BTC-USD has no dividends or splits, so adjusted and raw
-    prices match.
+    Download daily OHLC for a single signal ticker. The app uses it for the
+    G1 cash rule's yield (^FVX by default), and research scripts for
+    Bitcoin's daily highs and lows (BTC-USD). The main price cache keeps
+    adjusted close only, so these are fetched separately and cached on their
+    own in price_cache/gate_ohlc_<ticker>.csv. Returns a DataFrame with High,
+    Low, Close columns (daily), or an empty DataFrame on failure. Neither
+    series has dividends or splits, so adjusted and raw prices match.
     """
     safe = "".join(c if c.isalnum() else "_" for c in ticker)
     cache_path = os.path.join(CACHE_DIR, f"gate_ohlc_{safe}.csv")
@@ -1799,42 +1805,21 @@ def compute_sma_cross_state(ohlc, sma_len=150, rf_len=20, rf_period=20):
     return out
 
 
-def gate_signal_ticker(gate):
+def reject_removed_gates(params):
     """
-    The ticker whose price the gate's trend signal is computed FROM.
-
-    Distinct from gate["ticker"], which is the basket asset the gate
-    admits or excludes. They differ when the tradable instrument is a
-    wrapper around the real asset: hold IBIT, but read the trend from
-    BTC-USD, which has a decade more history and trades every day of the
-    week. Falls back to the gated ticker so older configs still work.
+    The Bitcoin trend gate and SMA cross gate were removed on November 13,
+    2026. A caller that still turns one on (params["btc_gate"] or
+    params["btc_sma_gate"] with "enabled") gets an error rather than a run
+    that silently ignores it; {"enabled": False}, as research scripts pass,
+    is fine.
     """
-    return gate.get("signal_ticker") or gate.get("ticker")
-
-
-def gate_label(gate):
-    """'IBIT (signal: BTC-USD)', or just 'IBIT' when they are the same."""
-    held = gate.get("ticker")
-    src = gate_signal_ticker(gate)
-    return held if src == held else f"{held} (signal: {src})"
-
-
-def _gate_open_as_of(btc_gate, as_of_date):
-    """
-    Return True if the Bitcoin trend gate is open as of `as_of_date`.
-    When the gate is disabled or unconfigured, returns True so the gated
-    ticker behaves like any other fixed-basket asset (default behavior is
-    unchanged unless the gate is explicitly enabled).
-    """
-    if not btc_gate or not btc_gate.get("enabled"):
-        return True
-    series = btc_gate.get("gate_series")
-    if series is None or len(series) == 0:
-        return False
-    s = series.loc[:as_of_date]
-    if len(s) == 0:
-        return False
-    return bool(s.iloc[-1])
+    for k in ("btc_gate", "btc_sma_gate"):
+        if (params.get(k) or {}).get("enabled"):
+            raise ValueError(
+                f"params[{k!r}] is enabled, but the Bitcoin gates were removed from the engine on "
+                f"November 13, 2026; run a copy of the engine from before then "
+                f"(Adaptive Portfolio Dashboard.py.bak_20261113_gates-removal)"
+            )
 
 
 def resolve_borrow_rate(cost, period_start, period_end):
@@ -1909,7 +1894,7 @@ def run_backtest(daily_prices, monthly_prices, params):
     Run the adaptive portfolio backtest with the given parameters.
 
     Execution timing (params["exec_timing"]):
-      "last_day"  (default) - allocations (momentum, gates, risk parity,
+      "last_day"  (default) - allocations (momentum, position weights, G1,
                   leverage) are computed from data through the close of the
                   trading day BEFORE the last trading day of the month, and
                   trades execute at the last trading day's close. This
@@ -1966,17 +1951,7 @@ def run_backtest(daily_prices, monthly_prices, params):
     if sizing not in SIZING_LABELS:
         raise ValueError(f"unknown position sizing {sizing!r}")
 
-    # Bitcoin trend gate (Radius Trend). When enabled, the gated ticker is
-    # only admitted to the basket on months when its trend signal is "in".
-    btc_gate = params.get("btc_gate", {})
-    btc_gate_ticker = btc_gate.get("ticker") if btc_gate.get("enabled") else None
-
-    # Bitcoin SMA cross gate (separate, parallel filter ported from the 8H
-    # Pine strategy). Independent of the Radius Trend gate. When both gates are
-    # enabled on the same ticker, the ticker must pass BOTH to be eligible
-    # (the stricter, drawdown-friendly combination).
-    btc_sma_gate = params.get("btc_sma_gate", {})
-    btc_sma_gate_ticker = btc_sma_gate.get("ticker") if btc_sma_gate.get("enabled") else None
+    reject_removed_gates(params)
 
     # G1 cash rule (see the docstring). Off unless enabled.
     g1 = params.get("g1") or {}
@@ -2067,14 +2042,6 @@ def run_backtest(daily_prices, monthly_prices, params):
             if t in monthly_prices.columns:
                 ps = monthly_prices[t].loc[:rebal_date].dropna()
                 if len(ps) > min_lookback:
-                    # Bitcoin trend gate: skip the gated ticker on months
-                    # when its Radius Trend signal is "out".
-                    if t == btc_gate_ticker and not _gate_open_as_of(btc_gate, signal_date):
-                        continue
-                    # Bitcoin SMA cross gate: skip the gated ticker on months
-                    # when its SMA cross signal is "out".
-                    if t == btc_sma_gate_ticker and not _gate_open_as_of(btc_sma_gate, signal_date):
-                        continue
                     basket.append(t)
 
         selected_equities = []
@@ -2259,26 +2226,6 @@ def run_backtest(daily_prices, monthly_prices, params):
                 r = holding_details[t]["return"]
                 holdings_str_parts.append(f"{t}: {w:.1%} (ret: {r:+.2%})")
 
-        # Bitcoin gate status for this month (for the trade log)
-        if btc_gate_ticker is None:
-            btc_gate_status = "off"
-        elif btc_gate_ticker not in monthly_prices.columns or len(
-            monthly_prices[btc_gate_ticker].loc[:rebal_date].dropna()
-        ) <= min_lookback:
-            btc_gate_status = "n/a"
-        else:
-            btc_gate_status = "in" if _gate_open_as_of(btc_gate, signal_date) else "out"
-
-        # Bitcoin SMA cross gate status for this month (for the trade log)
-        if btc_sma_gate_ticker is None:
-            btc_sma_gate_status = "off"
-        elif btc_sma_gate_ticker not in monthly_prices.columns or len(
-            monthly_prices[btc_sma_gate_ticker].loc[:rebal_date].dropna()
-        ) <= min_lookback:
-            btc_sma_gate_status = "n/a"
-        else:
-            btc_sma_gate_status = "in" if _gate_open_as_of(btc_sma_gate, signal_date) else "out"
-
         trade_log.append({
             "rebal_date": rebal_date.strftime("%Y-%m-%d"),
             "signal_date": signal_date.strftime("%Y-%m-%d"),
@@ -2287,8 +2234,6 @@ def run_backtest(daily_prices, monthly_prices, params):
             "exec_exit": exec_date_exit.strftime("%Y-%m-%d") if i < len(valid_months) - 2 else "",
             "basket": ", ".join(basket),
             "equities_selected": ", ".join(selected_equities) if selected_equities else "N/A",
-            "btc_gate": btc_gate_status,
-            "btc_sma_gate": btc_sma_gate_status,
             "g1": g1_status,
             "sizing": sizing_note,
             "final_holdings": " | ".join(holdings_str_parts),
@@ -2346,12 +2291,7 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
     final_top_n = params["final_top_n"]
     vol_months = params["vol_months"]
     sizing = params.get("sizing", SIZING_IF_UNSET)
-
-    btc_gate = params.get("btc_gate", {})
-    btc_gate_ticker = btc_gate.get("ticker") if btc_gate.get("enabled") else None
-
-    btc_sma_gate = params.get("btc_sma_gate", {})
-    btc_sma_gate_ticker = btc_sma_gate.get("ticker") if btc_sma_gate.get("enabled") else None
+    reject_removed_gates(params)
 
     # G1 cash rule (see run_backtest), applied to this signal too.
     g1 = params.get("g1") or {}
@@ -2365,10 +2305,6 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
         if t in monthly_prices_local.columns:
             ps = monthly_prices_local[t].loc[:signal_date].dropna()
             if len(ps) > min_lookback:
-                if t == btc_gate_ticker and not _gate_open_as_of(btc_gate, signal_date):
-                    continue
-                if t == btc_sma_gate_ticker and not _gate_open_as_of(btc_sma_gate, signal_date):
-                    continue
                 basket.append(t)
 
     selected_equities = []
@@ -2870,27 +2806,6 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
                 f"on={lev['mult_risk_on']:.2f}/off={lev['mult_risk_off']:.2f}"
             )
 
-    bg = params.get("btc_gate", {})
-    if bg.get("enabled"):
-        bg_mode = "long-position" if bg.get("mode") == "position" else "trend-up"
-        bg_summary = (
-            f"{gate_label(bg)} Radius Trend ({bg_mode}), "
-            f"step={bg.get('step', 0.15)}, dist={bg.get('multi', 0.5)}"
-        )
-    else:
-        bg_summary = "Off"
-
-    sg = params.get("btc_sma_gate", {})
-    if sg.get("enabled"):
-        sg_mode = "long-position" if sg.get("mode") == "position" else "trend-up"
-        sg_summary = (
-            f"{gate_label(sg)} SMA cross ({sg_mode}), "
-            f"SMA={sg.get('sma_len', 150)}, rf_len={sg.get('rf_len', 20)}, "
-            f"rf_period={sg.get('rf_period', 20)}"
-        )
-    else:
-        sg_summary = "Off"
-
     row = {
         "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "Fixed Assets": ", ".join(params["fixed_tickers"]),
@@ -2906,8 +2821,6 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
         "Execution": params.get("exec_timing_label", params.get("exec_timing", "last_day")),
         "Trading Cost (per side)": f"{params.get('cost_per_side', DEFAULT_COST_PER_SIDE):.2%}",
         "Leverage": lev_summary,
-        "BTC Gate": bg_summary,
-        "BTC SMA Gate": sg_summary,
         "G1 Cash Rule": g1_label(params.get("g1")),
         "Backtest Start": params["backtest_start"],
         "Backtest End": params.get("backtest_end", ""),
@@ -3765,217 +3678,6 @@ with st.sidebar.expander("Leverage", expanded=False):
             "mult_risk_off": mult_risk_off,
         }
 
-# ---- BITCOIN TREND GATE ----
-btc_gate_ui = {"enabled": False}
-with st.sidebar.expander("Bitcoin Trend Gate", expanded=False):
-    st.caption(
-        "Gate Bitcoin into the basket using the Radius Trend filter ported "
-        "from the TradingView strategy. When on, BTC-USD is only eligible for "
-        "the monthly basket while its trend signal is in the market, and it "
-        "still competes for a slot on momentum like every other asset. When "
-        "off, BTC behaves like any other fixed-basket asset."
-    )
-
-    btc_gate_on = st.checkbox(
-        "Enable Bitcoin trend gate",
-        value=False,
-        key="btc_gate_on",
-    )
-
-    if btc_gate_on:
-        btc_gate_ticker_ui = st.text_input(
-            "Gated asset (held in the basket)",
-            value="IBIT",
-            key="btc_gate_ticker",
-            help="The fixed-basket asset this gate admits or excludes. This "
-                 "must match a ticker you actually hold, e.g. IBIT.",
-        ).strip().upper()
-
-        btc_gate_signal_ui = st.text_input(
-            "Signal source",
-            value="BTC-USD",
-            key="btc_gate_signal_ticker",
-            help="The ticker the trend is computed FROM. Leave as BTC-USD "
-                 "when holding a Bitcoin ETF: spot BTC has a decade more "
-                 "history and trades 7 days a week, so the trend signal is "
-                 "far better conditioned than the ETF's short weekday-only "
-                 "series. Set it equal to the gated asset to read the trend "
-                 "off the ETF instead.",
-        ).strip().upper() or btc_gate_ticker_ui
-
-        btc_gate_mode_label = st.selectbox(
-            "Gate rule",
-            options=[
-                "Long position (matches the strategy)",
-                "Trend up only (looser)",
-            ],
-            index=0,
-            key="btc_gate_mode",
-            help=(
-                "Long position mirrors the script's actual entries and exits: "
-                "enter on trend up with price above the upper band, hold until "
-                "trend down with price below the lower band. Trend up only "
-                "admits BTC whenever the band reads as an uptrend."
-            ),
-        )
-        btc_gate_mode = "position" if btc_gate_mode_label.startswith("Long") else "trend"
-
-        bg_c1, bg_c2 = st.columns(2)
-        with bg_c1:
-            btc_gate_step = st.number_input(
-                "Radius Step",
-                min_value=0.001,
-                max_value=2.0,
-                value=0.15,
-                step=0.001,
-                format="%.3f",
-                key="btc_gate_step",
-                help="Matches the 'Radius Step' input in the TradingView strategy.",
-            )
-        with bg_c2:
-            btc_gate_multi = st.number_input(
-                "Start Points Distance",
-                min_value=0.1,
-                max_value=5.0,
-                value=0.5,
-                step=0.1,
-                key="btc_gate_multi",
-                help="Matches the 'Start Points Distance' input in the TradingView strategy.",
-            )
-
-        st.caption(
-            "Computed on daily BTC-USD bars. This is a close approximation of "
-            "the TradingView indicator; small differences can arise from data "
-            "feed and bar-count alignment."
-        )
-
-        btc_gate_ui = {
-            "enabled": True,
-            "ticker": btc_gate_ticker_ui,
-            "signal_ticker": btc_gate_signal_ui,
-            "mode": btc_gate_mode,
-            "step": float(btc_gate_step),
-            "multi": float(btc_gate_multi),
-            "n": 3,
-            "timeframe": "daily",
-        }
-
-# ---- BITCOIN SMA CROSS GATE ----
-btc_sma_gate_ui = {"enabled": False}
-with st.sidebar.expander("Bitcoin SMA Cross Gate", expanded=False):
-    st.caption(
-        "A second, independent gate ported from the 8-hour 'Simple SMA Cross' "
-        "TradingView strategy, converted to daily bars. When on, BTC-USD is "
-        "only eligible for the monthly basket while the SMA cross signal is in "
-        "the market, and it still competes for a slot on momentum like every "
-        "other asset. This is separate from the Radius Trend gate above. If "
-        "both gates are enabled on the same ticker, BTC must pass both."
-    )
-
-    btc_sma_gate_on = st.checkbox(
-        "Enable Bitcoin SMA cross gate",
-        value=False,
-        key="btc_sma_gate_on",
-    )
-
-    if btc_sma_gate_on:
-        btc_sma_gate_ticker_ui = st.text_input(
-            "Gated asset (held in the basket)",
-            value="IBIT",
-            key="btc_sma_gate_ticker",
-            help="The fixed-basket asset this gate admits or excludes. This "
-                 "must match a ticker you actually hold, e.g. IBIT.",
-        ).strip().upper()
-
-        btc_sma_gate_signal_ui = st.text_input(
-            "Signal source",
-            value="BTC-USD",
-            key="btc_sma_gate_signal_ticker",
-            help="The ticker the SMA cross is computed FROM. Leave as BTC-USD "
-                 "when holding a Bitcoin ETF: the 150-day SMA needs long "
-                 "history, and IBIT only starts in January 2024.",
-        ).strip().upper() or btc_sma_gate_ticker_ui
-
-        btc_sma_gate_mode_label = st.selectbox(
-            "Gate rule",
-            options=[
-                "Long position (matches the strategy)",
-                "Trend up only (looser)",
-            ],
-            index=0,
-            key="btc_sma_gate_mode",
-            help=(
-                "Long position mirrors the script's entries and exits: enter "
-                "when price is above the long SMA, the prior bar was above it, "
-                "and the fast SMA has been rising; exit when price closes below "
-                "the long SMA for three straight bars or the fast SMA turns "
-                "down. Trend up only admits BTC whenever price is above the "
-                "long SMA and the fast SMA is rising, ignoring the exit logic."
-            ),
-        )
-        btc_sma_gate_mode = (
-            "position" if btc_sma_gate_mode_label.startswith("Long") else "trend"
-        )
-
-        st.caption(
-            "Defaults convert the 8-hour script to daily bars (three 8-hour "
-            "bars per day): SMA 450 -> 150, rising/falling SMA 60 -> 20, "
-            "rising/falling period 60 -> 20."
-        )
-
-        sg_c1, sg_c2 = st.columns(2)
-        with sg_c1:
-            btc_sma_long_len = st.number_input(
-                "Long SMA length (days)",
-                min_value=2,
-                max_value=600,
-                value=150,
-                step=1,
-                key="btc_sma_long_len",
-                help="Daily equivalent of the script's 450-bar 8-hour SMA.",
-            )
-        with sg_c2:
-            btc_sma_fast_len = st.number_input(
-                "Rising/falling SMA length (days)",
-                min_value=2,
-                max_value=200,
-                value=20,
-                step=1,
-                key="btc_sma_fast_len",
-                help="Daily equivalent of the script's 60-bar 8-hour fast SMA.",
-            )
-
-        btc_sma_rf_period = st.number_input(
-            "Rising/falling period (days)",
-            min_value=1,
-            max_value=200,
-            value=20,
-            step=1,
-            key="btc_sma_rf_period",
-            help=(
-                "How many consecutive daily bars the fast SMA must rise (to "
-                "enter) or fall (to exit), matching Pine's ta.rising/ta.falling. "
-                "Daily equivalent of the script's 60-bar period."
-            ),
-        )
-
-        st.caption(
-            "Computed on daily BTC-USD bars. This is a close approximation of "
-            "the 8-hour TradingView strategy; signals differ somewhat because "
-            "the bar count and bar timing are not the same on daily data."
-        )
-
-        btc_sma_gate_ui = {
-            "enabled": True,
-            "ticker": btc_sma_gate_ticker_ui,
-            "signal_ticker": btc_sma_gate_signal_ui,
-            "mode": btc_sma_gate_mode,
-            "sma_len": int(btc_sma_long_len),
-            "rf_len": int(btc_sma_fast_len),
-            "rf_period": int(btc_sma_rf_period),
-            "timeframe": "daily",
-        }
-
 # ---- G1 CASH RULE ----
 # Off by default (added November 7, 2026). The defaults are the tested rule
 # (G1_DEFAULTS); every setting can be changed here to explore it.
@@ -4642,111 +4344,6 @@ if run_button:
                     [f"{k} <- {', '.join(v)}" for k, v in backfill_rules.items()]
                 ) if backfill_rules else "None"
 
-                # ---- BITCOIN TREND GATE (compute the daily signal once) ----
-                btc_gate_config = {"enabled": False}
-                btc_gate_state_for_display = None
-                if btc_gate_ui.get("enabled"):
-                    g_ticker = btc_gate_ui["ticker"]
-                    g_signal = gate_signal_ticker(btc_gate_ui)
-                    if g_ticker not in selected_fixed:
-                        st.warning(
-                            f"Bitcoin trend gate is on, but {g_ticker} is not in the "
-                            f"fixed basket, so the gate has no effect. Set the gated "
-                            f"asset to a ticker you hold (e.g. IBIT), or add "
-                            f"{g_ticker} under Fixed Basket Assets."
-                        )
-                    with st.spinner(f"Computing {g_signal} trend gate..."):
-                        gate_ohlc = download_gate_ohlc(
-                            g_signal, download_start, force_refresh=force_refresh
-                        )
-                    if gate_ohlc is None or gate_ohlc.empty:
-                        st.warning(
-                            f"Could not load OHLC data for {g_signal}; the Bitcoin "
-                            f"trend gate is disabled for this run."
-                        )
-                    else:
-                        gate_state = compute_radius_trend_state(
-                            gate_ohlc,
-                            step=btc_gate_ui["step"],
-                            multi=btc_gate_ui["multi"],
-                            n=btc_gate_ui.get("n", 3),
-                        )
-                        open_col = "position" if btc_gate_ui["mode"] == "position" else "trend"
-                        if gate_state is None or gate_state.empty or open_col not in gate_state.columns:
-                            st.warning(
-                                f"Trend gate signal could not be computed for "
-                                f"{g_signal}; gate disabled for this run."
-                            )
-                        else:
-                            btc_gate_config = {
-                                "enabled": True,
-                                "ticker": g_ticker,
-                                "signal_ticker": g_signal,
-                                "mode": btc_gate_ui["mode"],
-                                "step": btc_gate_ui["step"],
-                                "multi": btc_gate_ui["multi"],
-                                "n": btc_gate_ui.get("n", 3),
-                                "gate_series": (gate_state[open_col] == 1.0),
-                            }
-                            btc_gate_state_for_display = gate_state
-
-                # ---- BITCOIN SMA CROSS GATE (compute the daily signal once) ----
-                btc_sma_gate_config = {"enabled": False}
-                btc_sma_gate_state_for_display = None
-                if btc_sma_gate_ui.get("enabled"):
-                    sg_ticker = btc_sma_gate_ui["ticker"]
-                    sg_signal = gate_signal_ticker(btc_sma_gate_ui)
-                    if sg_ticker not in selected_fixed:
-                        st.warning(
-                            f"Bitcoin SMA cross gate is on, but {sg_ticker} is not in "
-                            f"the fixed basket, so the gate has no effect. Set the "
-                            f"gated asset to a ticker you hold (e.g. IBIT), or add "
-                            f"{sg_ticker} under Fixed Basket Assets."
-                        )
-                    with st.spinner(f"Computing {sg_signal} SMA cross gate..."):
-                        sma_gate_ohlc = download_gate_ohlc(
-                            sg_signal, download_start, force_refresh=force_refresh
-                        )
-                    if sma_gate_ohlc is None or sma_gate_ohlc.empty:
-                        st.warning(
-                            f"Could not load price data for {sg_signal}; the Bitcoin "
-                            f"SMA cross gate is disabled for this run."
-                        )
-                    else:
-                        sma_gate_state = compute_sma_cross_state(
-                            sma_gate_ohlc,
-                            sma_len=btc_sma_gate_ui["sma_len"],
-                            rf_len=btc_sma_gate_ui["rf_len"],
-                            rf_period=btc_sma_gate_ui["rf_period"],
-                        )
-                        sma_open_col = (
-                            "position" if btc_sma_gate_ui["mode"] == "position" else "trend"
-                        )
-                        if (
-                            sma_gate_state is None
-                            or sma_gate_state.empty
-                            or sma_open_col not in sma_gate_state.columns
-                            or sma_gate_state[sma_open_col].notna().sum() == 0
-                        ):
-                            st.warning(
-                                f"SMA cross gate signal could not be computed for "
-                                f"{sg_signal} (not enough daily history for the "
-                                f"{btc_sma_gate_ui['sma_len']}-day SMA); gate disabled "
-                                f"for this run."
-                            )
-                        else:
-                            btc_sma_gate_config = {
-                                "enabled": True,
-                                "ticker": sg_ticker,
-                                "signal_ticker": sg_signal,
-                                "mode": btc_sma_gate_ui["mode"],
-                                "sma_len": btc_sma_gate_ui["sma_len"],
-                                "rf_len": btc_sma_gate_ui["rf_len"],
-                                "rf_period": btc_sma_gate_ui["rf_period"],
-                                "gate_series": (sma_gate_state[sma_open_col] == 1.0),
-                            }
-                            btc_sma_gate_state_for_display = sma_gate_state
-
                 # ---- G1 CASH RULE (load the yield series once) ----
                 g1_config = {"enabled": False}
                 if g1_ui.get("enabled"):
@@ -4801,8 +4398,6 @@ if run_button:
                     "backtest_end": backtest_end,
                     "backfill_summary": backfill_summary,
                     "leverage_params": leverage_params_ui,
-                    "btc_gate": btc_gate_config,
-                    "btc_sma_gate": btc_sma_gate_config,
                     "g1": g1_config,
                 }
 
@@ -5196,67 +4791,6 @@ if run_button:
                                     )
                                 st.markdown("  \n".join(lev_parts))
 
-                        # Current Bitcoin gate signal
-                        if btc_gate_config.get("enabled"):
-                            g_ticker = gate_label(btc_gate_config)
-                            open_now = _gate_open_as_of(btc_gate_config, sig_date)
-                            emoji = "🟢" if open_now else "🔴"
-                            status_word = "in the market" if open_now else "out of the market"
-                            mode_word = (
-                                "long-position" if btc_gate_config["mode"] == "position"
-                                else "trend-up"
-                            )
-                            gate_line = (
-                                f"**Bitcoin gate ({mode_word}):** {emoji} {g_ticker} "
-                                f"{status_word}"
-                            )
-                            if btc_gate_state_for_display is not None:
-                                sub = btc_gate_state_for_display.loc[:sig_date]
-                                if len(sub) > 0:
-                                    last = sub.iloc[-1]
-                                    cl = last.get("close", np.nan)
-                                    bnd = last.get("band", np.nan)
-                                    if not (np.isnan(cl) or np.isnan(bnd)):
-                                        gate_line += (
-                                            f"  ·  close ${cl:,.0f} vs band ${bnd:,.0f}"
-                                        )
-                            if not open_now and btc_gate_config["ticker"] in signals.get("basket", []):
-                                pass  # gated-out ticker won't be in the basket
-                            elif not open_now:
-                                gate_line += "  (excluded from the basket)"
-                            st.markdown(gate_line)
-
-                        # Current Bitcoin SMA cross gate signal
-                        if btc_sma_gate_config.get("enabled"):
-                            sg_ticker = gate_label(btc_sma_gate_config)
-                            sma_open_now = _gate_open_as_of(btc_sma_gate_config, sig_date)
-                            sma_emoji = "🟢" if sma_open_now else "🔴"
-                            sma_status_word = (
-                                "in the market" if sma_open_now else "out of the market"
-                            )
-                            sma_mode_word = (
-                                "long-position" if btc_sma_gate_config["mode"] == "position"
-                                else "trend-up"
-                            )
-                            sma_gate_line = (
-                                f"**Bitcoin SMA cross gate ({sma_mode_word}):** "
-                                f"{sma_emoji} {sg_ticker} {sma_status_word}"
-                            )
-                            if btc_sma_gate_state_for_display is not None:
-                                sub = btc_sma_gate_state_for_display.loc[:sig_date]
-                                if len(sub) > 0:
-                                    last = sub.iloc[-1]
-                                    cl = last.get("close", np.nan)
-                                    sl = last.get("sma_long", np.nan)
-                                    if not (np.isnan(cl) or np.isnan(sl)):
-                                        sma_gate_line += (
-                                            f"  ·  close ${cl:,.0f} vs "
-                                            f"{btc_sma_gate_config['sma_len']}d SMA ${sl:,.0f}"
-                                        )
-                            if not sma_open_now and sg_ticker not in signals.get("basket", []):
-                                sma_gate_line += "  (excluded from the basket)"
-                            st.markdown(sma_gate_line)
-
                         # Current G1 cash rule signal
                         if g1_config.get("enabled"):
                             _g1i = signals.get("g1_info") or {}
@@ -5592,27 +5126,6 @@ if run_button:
                                     f"**Leverage:** {lp['ticker']} {lp['long_sma']}/{lp['short_sma']}d SMA, "
                                     f"on={lp['mult_risk_on']:.2f}x / off={lp['mult_risk_off']:.2f}x"
                                 )
-                        if btc_gate_config.get("enabled"):
-                            bg_mode = (
-                                "long-position" if btc_gate_config["mode"] == "position"
-                                else "trend-up"
-                            )
-                            st.markdown(
-                                f"**BTC gate:** {gate_label(btc_gate_config)} Radius Trend "
-                                f"({bg_mode}), step {btc_gate_config['step']:.3f}, "
-                                f"dist {btc_gate_config['multi']:.2f}"
-                            )
-                        if btc_sma_gate_config.get("enabled"):
-                            sg_mode = (
-                                "long-position" if btc_sma_gate_config["mode"] == "position"
-                                else "trend-up"
-                            )
-                            st.markdown(
-                                f"**BTC SMA gate:** {gate_label(btc_sma_gate_config)} SMA cross "
-                                f"({sg_mode}), SMA {btc_sma_gate_config['sma_len']}d, "
-                                f"rf {btc_sma_gate_config['rf_len']}d/"
-                                f"{btc_sma_gate_config['rf_period']}d"
-                            )
                         if g1_config.get("enabled"):
                             st.markdown(f"**G1 cash rule:** {g1_label(g1_config)}")
 
@@ -5681,38 +5194,6 @@ if run_button:
                                 f"({lp['mult_risk_off']:.2f}x to {lp['mult_risk_on']:.2f}x) "
                                 f"based on {lp['ticker']} trend regime."
                             )
-                    gate_note = ""
-                    if btc_gate_config.get("enabled"):
-                        bg_mode = (
-                            "long-position state" if btc_gate_config["mode"] == "position"
-                            else "trend-up state"
-                        )
-                        gate_note = (
-                            f" Bitcoin trend gate: {btc_gate_config['ticker']} is only "
-                            f"eligible for the basket when the "
-                            f"{gate_signal_ticker(btc_gate_config)} Radius Trend "
-                            f"{bg_mode} is in the market (Radius Step "
-                            f"{btc_gate_config['step']:.3f}, Start Points Distance "
-                            f"{btc_gate_config['multi']:.2f}, computed on daily bars). "
-                            f"This is a close approximation of the TradingView "
-                            f"indicator and may differ slightly due to data-feed alignment."
-                        )
-                    sma_gate_note = ""
-                    if btc_sma_gate_config.get("enabled"):
-                        sg_mode = (
-                            "long-position state" if btc_sma_gate_config["mode"] == "position"
-                            else "trend-up state"
-                        )
-                        sma_gate_note = (
-                            f" Bitcoin SMA cross gate: {btc_sma_gate_config['ticker']} is "
-                            f"only eligible for the basket when the "
-                            f"{gate_signal_ticker(btc_sma_gate_config)} SMA cross "
-                            f"{sg_mode} is in the market ({btc_sma_gate_config['sma_len']}-day "
-                            f"long SMA, {btc_sma_gate_config['rf_len']}-day rising/falling SMA "
-                            f"over {btc_sma_gate_config['rf_period']} bars, computed on daily "
-                            f"bars as a conversion of the original 8-hour strategy). When both "
-                            f"Bitcoin gates are enabled, the ticker must pass both."
-                        )
                     g1_note = ""
                     if g1_config.get("enabled"):
                         g1_note = (
@@ -5737,8 +5218,6 @@ if run_button:
                         + sizing_info["note"] + " "
                         + "Sortino ratio uses BIL as the risk-free rate."
                         + lev_note
-                        + gate_note
-                        + sma_gate_note
                         + g1_note
                     )
 
