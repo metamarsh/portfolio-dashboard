@@ -397,6 +397,34 @@ INITIAL_CAPITAL = 10_000
 # earlier gross results exactly.
 DEFAULT_COST_PER_SIDE = 0.0005
 
+# Position sizing: how the final holdings are weighted (added November 13,
+# 2026, after Tyler decided on November 12, 2026 to switch to ERC).
+#   "erc"          equal risk contribution, the sidebar's default. The holdings
+#                  in ERC_KEEP (BIL) keep the weight inverse volatility gives
+#                  them, and the other holdings split the rest so each carries
+#                  the same share of that group's variance, from the covariance
+#                  of their daily returns over the rows compute_risk_parity_weights
+#                  reads (the vol_months calendar months to the signal date, on
+#                  the days every holding has a price). A month with too short
+#                  a sample (erc_min_returns: 126 returns at 12 months), a zero
+#                  variance or no solver answer keeps the inverse-volatility
+#                  weights. It is ERC12m in the ERC Weights Test:
+#                  C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System\Basket Research\ETF Scouting\ERC Weights Test 2026-11-12\
+#   "inverse_vol"  inverse volatility (simple risk parity), the method until
+#                  then: compute_risk_parity_weights, unchanged.
+# run_backtest and compute_current_signals read params["sizing"]. A caller that
+# leaves it out (research scripts and tools written before the option) gets
+# inverse volatility, so nothing outside the app changes method until it asks.
+SIZING_OPTIONS = {
+    "Equal risk contribution (ERC)": "erc",
+    "Inverse volatility (simple risk parity)": "inverse_vol",
+}
+SIZING_LABELS = {v: k for k, v in SIZING_OPTIONS.items()}
+SIZING_FILE_TAGS = {"erc": "ERC", "inverse_vol": "Inverse vol"}
+SIZING_DEFAULT = "erc"            # the sidebar's starting choice
+SIZING_IF_UNSET = "inverse_vol"   # for callers that pass no params["sizing"]
+ERC_KEEP = ("BIL",)               # keep their inverse-volatility weight, outside the ERC split
+
 # G1 cash rule (added November 7, 2026, off by default). In a cash month (BIL
 # among the final holdings), move part of BIL's weight to an intermediate
 # Treasury fund while Treasury yields are falling and the fund's main score is
@@ -1144,6 +1172,163 @@ def compute_risk_parity_weights(daily_prices, selected_tickers, as_of_date, vol_
     return weights
 
 
+def solve_erc(S, tol=1e-11, itmax=200):
+    """
+    Equal risk contribution: the weights x > 0, sum(x) = 1, with x_i (Sx)_i
+    the same for every fund (S is the covariance matrix). Solved as Spinu's
+    convex problem, minimize y'Sy / 2 - sum(ln y_i) / n, by a damped Newton
+    iteration; x = y / sum(y). None if it does not converge. Copied line for
+    line from erc() in MV252 Harness.py (the Minimum Variance 252-Day Test of
+    November 12, 2026, in ETF Scouting), the solver the ERC Weights Test used.
+    """
+    n = S.shape[0]
+    if n == 1:
+        return np.array([1.0])
+    b = np.full(n, 1.0 / n)
+    y = 1.0 / np.sqrt(np.diag(S) * n)              # the exact answer when every correlation is 0
+
+    def f(z):
+        return 0.5 * float(z @ S @ z) - float(b @ np.log(z))
+
+    for _ in range(itmax):
+        g = S @ y - b / y
+        if np.max(np.abs(g * y)) < tol:           # y_i (Sy)_i = 1 / n for every fund
+            x = y / y.sum()
+            return x if np.all(np.isfinite(x)) and np.all(x > 0) else None
+        try:
+            d = np.linalg.solve(S + np.diag(b / y ** 2), -g)
+        except np.linalg.LinAlgError:
+            return None
+        f0, slope, t, moved = f(y), float(g @ d), 1.0, False
+        g0 = float(np.max(np.abs(g * y)))
+        while t > 1e-14:
+            yn = y + t * d
+            # accept on the usual sufficient decrease, or, once the objective's
+            # change is lost in rounding, on a smaller residual
+            if np.all(yn > 0) and (f(yn) <= f0 + 1e-4 * t * slope
+                                   or float(np.max(np.abs((S @ yn - b / yn) * yn))) < g0):
+                y, moved = yn, True
+                break
+            t *= 0.5
+        if not moved:
+            return None
+    return None
+
+
+def erc_min_returns(vol_months):
+    """The fewest daily returns an ERC sample may have: half of a full window
+    (252 returns a year), and at least 20. 126 at the standing 12 months, as
+    in the ERC Weights Test."""
+    return max(20, int(np.ceil(252 * vol_months / 12 * 0.5)))
+
+
+def compute_position_weights(daily_prices, selected_tickers, as_of_date, vol_months=12,
+                             sizing=SIZING_IF_UNSET):
+    """
+    The final holdings' weights under the chosen position sizing (see
+    SIZING_OPTIONS). Returns (weights, note): weights is a dict in holding
+    order, and note says what set them, for the trade log and the signals:
+    "Inverse vol", "ERC", or "Inverse vol (ERC fallback: <reason>)".
+
+    "inverse_vol": compute_risk_parity_weights, unchanged.
+    "erc": the holdings in ERC_KEEP (BIL) keep the weight
+    compute_risk_parity_weights gives them, and the rest of the portfolio is
+    split among the other holdings by equal risk contribution (solve_erc) on
+    the sample covariance (ddof = 1) of their daily returns over the rows
+    compute_risk_parity_weights reads: vol_months calendar months to
+    as_of_date, on the days every holding, BIL included, has a price. The
+    month keeps the inverse-volatility weights when the sample has fewer than
+    erc_min_returns(vol_months) returns ("short sample"), when a variance is
+    zero or the covariance is not finite ("zero variance"), or when the
+    solver finds no answer ("no convergence"). The same steps as
+    new_weights_x in MV252 Harness.py with the ERC Weights Test's ERC12m
+    setting.
+    """
+    iv = compute_risk_parity_weights(daily_prices, selected_tickers, as_of_date, vol_months)
+    if sizing == "inverse_vol":
+        return iv, "Inverse vol"
+    if sizing != "erc":
+        raise ValueError(f"unknown position sizing {sizing!r}")
+    keep = [t for t in selected_tickers if t in ERC_KEEP]
+    funds = [t for t in selected_tickers if t not in keep]
+    sleeve = 1.0 - sum(float(iv[t]) for t in keep)
+    if not funds or sleeve <= 0:
+        return iv, "ERC"
+    if len(funds) == 1:
+        x = np.array([1.0])
+    else:
+        lookback_start = as_of_date - pd.DateOffset(months=vol_months)
+        subset = daily_prices[selected_tickers].loc[lookback_start:as_of_date].dropna()
+        px = subset[funds].to_numpy(dtype=float)
+        r = px[1:] / px[:-1] - 1.0
+        if len(r) < erc_min_returns(vol_months):
+            return iv, "Inverse vol (ERC fallback: short sample)"
+        S = np.atleast_2d(np.cov(r.T, ddof=1))
+        var = np.diag(S)
+        if not np.all(np.isfinite(S)) or np.any(var <= 0):
+            return iv, "Inverse vol (ERC fallback: zero variance)"
+        x = solve_erc(S)
+        if x is None:
+            return iv, "Inverse vol (ERC fallback: no convergence)"
+    weights = {}
+    for t in selected_tickers:                    # keep the holding order
+        weights[t] = float(iv[t]) if t in keep else sleeve * float(x[funds.index(t)])
+    return weights, "ERC"
+
+
+def describe_sizing(params, trade_df=None):
+    """
+    Plain-language descriptions of a run's position sizing, for the results
+    page and the results log. Returns a dict with:
+      "label"     the method's name, as in the sidebar
+      "file_tag"  a short name for download file names
+      "final"     the method in the settings summary's "Final" line
+      "fallback"  for ERC with a trade log, the months ERC fell back to
+                  inverse volatility, e.g. "0 of 377 months" or "2 of 377
+                  months (short sample: 1998-03, 1998-04)"; "not an ERC run"
+                  otherwise
+      "line"      a sentence for the Performance Summary
+      "note"      a sentence for the method note at the bottom of the page
+    """
+    sizing = params.get("sizing", SIZING_IF_UNSET)
+    vm = int(params.get("vol_months", 12))
+    info = {"label": SIZING_LABELS[sizing], "file_tag": SIZING_FILE_TAGS[sizing], "fallback": "not an ERC run"}
+    if sizing == "inverse_vol":
+        info["final"] = f"inverse volatility ({vm}mo vol)"
+        info["line"] = f"Position sizing: inverse volatility (simple risk parity) on the {vm}-month window."
+        info["note"] = (
+            f"Position sizing: inverse volatility (simple risk parity), each holding weighted in proportion "
+            f"to 1 over the volatility of its daily returns over the {vm} months to the signal date."
+        )
+        return info
+    if trade_df is not None and "sizing" in trade_df.columns:
+        prefix = "Inverse vol (ERC fallback: "
+        by_reason = {}
+        for hm, s in zip(trade_df["hold_month"], trade_df["sizing"].astype(str)):
+            if s.startswith(prefix):
+                by_reason.setdefault(s[len(prefix):-1], []).append(hm)
+        n_fb = sum(len(v) for v in by_reason.values())
+        text = f"{n_fb} of {len(trade_df)} months"
+        if n_fb:
+            text += " (" + "; ".join(
+                f"{why}: " + (", ".join(ms) if len(ms) <= 6 else f"{len(ms)} months from {ms[0]} to {ms[-1]}")
+                for why, ms in by_reason.items()) + ")"
+        info["fallback"] = text
+    info["final"] = f"equal risk contribution ({vm}mo window, BIL at inverse volatility)"
+    info["line"] = (
+        f"Position sizing: equal risk contribution (ERC) on the {vm}-month window, with BIL at its "
+        f"inverse-volatility weight. ERC fell back to inverse volatility in {info['fallback']}."
+    )
+    info["note"] = (
+        f"Position sizing: equal risk contribution (ERC). BIL keeps its inverse-volatility weight, and the other "
+        f"holdings split the rest so each carries the same share of that group's risk, from the covariance of "
+        f"their daily returns over the {vm} months to the signal date. A month with fewer than "
+        f"{erc_min_returns(vm)} daily returns, a zero variance or no solver answer uses inverse volatility "
+        f"(in this run: {info['fallback']})."
+    )
+    return info
+
+
 def apply_g1_cash_rule(weights, final_holdings, signal_date, g1, fund_bil_frame,
                        daily_ffill, main_lookbacks, main_lookback_weights):
     """
@@ -1748,11 +1933,19 @@ def run_backtest(daily_prices, monthly_prices, params):
       Harness.py (Signal Flip Tests folder).
 
     G1 cash rule (params["g1"], off unless "enabled"; added November 7,
-    2026): after the risk parity weights, apply_g1_cash_rule may move part of
+    2026): after the position weights, apply_g1_cash_rule may move part of
     BIL's weight to the G1 fund, which then counts as a holding for returns,
     costs, leverage and the trade log. While the rule is on, the trade log
     gains a "g1" column with each month's outcome. With it off, every output
     is exactly what it was before the rule was added.
+
+    Position sizing (params["sizing"]; added November 13, 2026):
+    compute_position_weights weights the final holdings by equal risk
+    contribution ("erc", the app's default) or inverse volatility
+    ("inverse_vol"). Left out, it is inverse volatility, as before the
+    option, so older callers' results do not move. The trade log's "sizing"
+    column says how each month was weighted, including the months ERC fell
+    back to inverse volatility.
     """
     fixed_tickers = params["fixed_tickers"]
     equity_tickers = params["equity_tickers"]
@@ -1769,6 +1962,9 @@ def run_backtest(daily_prices, monthly_prices, params):
     exec_timing = params.get("exec_timing", "last_day")
     cost_per_side = params.get("cost_per_side", DEFAULT_COST_PER_SIDE)
     cost_per_side = float(cost_per_side) if cost_per_side is not None else 0.0
+    sizing = params.get("sizing", SIZING_IF_UNSET)
+    if sizing not in SIZING_LABELS:
+        raise ValueError(f"unknown position sizing {sizing!r}")
 
     # Bitcoin trend gate (Radius Trend). When enabled, the gated ticker is
     # only admitted to the basket on months when its trend signal is "in".
@@ -1915,8 +2111,8 @@ def run_backtest(daily_prices, monthly_prices, params):
         if len(final_holdings) == 0:
             continue
 
-        weights = compute_risk_parity_weights(
-            basket_daily, final_holdings, signal_date, vol_months
+        weights, sizing_note = compute_position_weights(
+            basket_daily, final_holdings, signal_date, vol_months, sizing
         )
 
         # G1 cash rule: may move part of BIL's weight to the G1 fund.
@@ -2094,6 +2290,7 @@ def run_backtest(daily_prices, monthly_prices, params):
             "btc_gate": btc_gate_status,
             "btc_sma_gate": btc_sma_gate_status,
             "g1": g1_status,
+            "sizing": sizing_note,
             "final_holdings": " | ".join(holdings_str_parts),
             "leverage": f"{lev_mult:.2f}x",
             "lev_regime": lev_regime,
@@ -2148,6 +2345,7 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
     main_lookback_weights = params["main_lookback_weights"]
     final_top_n = params["final_top_n"]
     vol_months = params["vol_months"]
+    sizing = params.get("sizing", SIZING_IF_UNSET)
 
     btc_gate = params.get("btc_gate", {})
     btc_gate_ticker = btc_gate.get("ticker") if btc_gate.get("enabled") else None
@@ -2243,8 +2441,8 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
     n_select = min(final_top_n, len(latest_basket))
     final_holdings = latest_basket.head(n_select).index.tolist()
 
-    weights = compute_risk_parity_weights(
-        daily_prices, final_holdings, signal_date, vol_months
+    weights, sizing_note = compute_position_weights(
+        daily_prices, final_holdings, signal_date, vol_months, sizing
     )
 
     g1_info = None
@@ -2275,6 +2473,7 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
         "final_holdings": final_holdings,
         "weights": weights,
         "basket": basket,
+        "sizing_note": sizing_note,
     }
     if g1_fund:
         out["g1_info"] = g1_info
@@ -2406,6 +2605,9 @@ def compute_current_signals(daily_prices, monthly_prices, params):
                               the trading day before prev_exec_date
         prev_holdings         list of tickers from the prev month-end signal
         prev_weights          dict of {ticker: weight} from the prev month-end signal
+        sizing_note           how the live signal was weighted: "ERC", "Inverse vol"
+                              or "Inverse vol (ERC fallback: <reason>)"
+        prev_sizing_note      the same for the prev month-end signal
     """
     # ---- LIVE SIGNAL ----
     # Use the most recent daily bar as the signal date. If that date falls
@@ -2454,6 +2656,7 @@ def compute_current_signals(daily_prices, monthly_prices, params):
     prev_month_end_date = None
     prev_holdings = []
     prev_weights = {}
+    prev_sizing_note = None
     prev_exec_date = None
     prev_data_date = None
     completed = monthly_prices.index[monthly_prices.index <= last_daily]
@@ -2485,6 +2688,7 @@ def compute_current_signals(daily_prices, monthly_prices, params):
         if prev is not None:
             prev_holdings = prev["final_holdings"]
             prev_weights = prev["weights"]
+            prev_sizing_note = prev["sizing_note"]
 
     return {
         **live,
@@ -2494,6 +2698,7 @@ def compute_current_signals(daily_prices, monthly_prices, params):
         "prev_data_date": prev_data_date,
         "prev_holdings": prev_holdings,
         "prev_weights": prev_weights,
+        "prev_sizing_note": prev_sizing_note,
     }
 
 
@@ -2696,6 +2901,8 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
         "Main Lookback": params["main_lookback_label"],
         "Final Top N": params["final_top_n"],
         "Vol Window (months)": params["vol_months"],
+        "Position Sizing": SIZING_LABELS[params.get("sizing", SIZING_IF_UNSET)],
+        "ERC Fallback Months": params.get("erc_fallback_summary", "not an ERC run"),
         "Execution": params.get("exec_timing_label", params.get("exec_timing", "last_day")),
         "Trading Cost (per side)": f"{params.get('cost_per_side', DEFAULT_COST_PER_SIDE):.2%}",
         "Leverage": lev_summary,
@@ -2727,9 +2934,23 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
 
     if os.path.exists(filepath):
         existing = pd.read_excel(filepath, engine="openpyxl")
+        if "Position Sizing" not in existing.columns:
+            # Every run logged before November 13, 2026 used inverse
+            # volatility, the only position sizing the engine had until then.
+            existing["Position Sizing"] = SIZING_LABELS["inverse_vol"]
+            existing["ERC Fallback Months"] = "not an ERC run"
         combined = pd.concat([existing, new_row_df], ignore_index=True)
     else:
         combined = new_row_df
+
+    # Keep the position sizing columns beside the volatility window.
+    cols = list(combined.columns)
+    if "Vol Window (months)" in cols:
+        for c in ("ERC Fallback Months", "Position Sizing"):
+            if c in cols:
+                cols.remove(c)
+                cols.insert(cols.index("Vol Window (months)") + 1, c)
+        combined = combined[cols]
 
     combined.to_excel(filepath, index=False, engine="openpyxl")
 
@@ -3309,12 +3530,36 @@ exec_timing_label = st.sidebar.selectbox(
 )
 exec_timing = EXEC_TIMING_OPTIONS[exec_timing_label]
 
+sizing_label = st.sidebar.selectbox(
+    "Position sizing",
+    options=list(SIZING_OPTIONS.keys()),
+    index=list(SIZING_OPTIONS.values()).index(SIZING_DEFAULT),
+    key="position_sizing",
+    help=(
+        "How the final holdings are weighted. Equal risk contribution (ERC), the "
+        "default since November 13, 2026: BIL keeps its inverse-volatility weight, "
+        "and the other holdings split the rest so each carries the same share of "
+        "that group's risk, counting how they move together. A month with too "
+        "little data uses inverse volatility, and the results say how often. "
+        "Inverse volatility (simple risk parity), the method until then: each "
+        "holding's weight is in proportion to 1 over its volatility, so a fund "
+        "half as volatile gets twice the weight, and correlations are ignored."
+    ),
+)
+sizing = SIZING_OPTIONS[sizing_label]
+
 vol_months = st.sidebar.slider(
-    "Risk parity volatility window (months)",
+    "Volatility window (months)",
     min_value=3,
     max_value=24,
     value=12,
     step=1,
+    help=(
+        "The months of daily returns, up to the signal date, that the position "
+        "weights read: each holding's volatility for inverse volatility, and the "
+        "holdings' volatilities and correlations (their covariance) for ERC. "
+        "12 is the standing setting."
+    ),
 )
 
 cost_per_side_pct = st.sidebar.number_input(
@@ -4548,6 +4793,7 @@ if run_button:
                     "main_lookback_label": main_lookback_label,
                     "final_top_n": final_top_n,
                     "vol_months": vol_months,
+                    "sizing": sizing,
                     "exec_timing": exec_timing,
                     "exec_timing_label": exec_timing_label,
                     "cost_per_side": cost_per_side,
@@ -4674,6 +4920,11 @@ if run_button:
                             daily_equity=entry["daily_equity"],
                         )
 
+                    # Which position sizing made this run, and how often ERC fell
+                    # back to inverse volatility (read from the trade log).
+                    sizing_info = describe_sizing(params, trade_df)
+                    params["erc_fallback_summary"] = sizing_info["fallback"]
+
                     try:
                         append_to_excel(params, strat_metrics, bench_metrics, RESULTS_FILE)
                         st.success(f"Results appended to **{os.path.basename(RESULTS_FILE)}**")
@@ -4694,6 +4945,7 @@ if run_button:
                             f"Strategy returns are gross, with no trading costs. One-way turnover "
                             f"averaged {_avg_turnover:.1%} of the portfolio a month."
                         )
+                    st.caption(sizing_info["line"])
 
                     def fmt_pct(v):
                         if isinstance(v, (int, float)) and not np.isnan(v):
@@ -4861,6 +5113,12 @@ if run_button:
                             w = signals["weights"].get(t, 0)
                             holdings_parts.append(f"{w:.2%} {t}")
                         st.markdown("**Recommended holdings:** " + " | ".join(holdings_parts))
+                        _sz_line = f"**Position sizing:** {sizing_info['label']}"
+                        _sz_live = signals.get("sizing_note") or ""
+                        if _sz_live.startswith("Inverse vol (ERC fallback"):
+                            _sz_line += (" · this signal uses inverse volatility ("
+                                         + _sz_live[len("Inverse vol ("):])
+                        st.markdown(_sz_line)
 
                         if signals["selected_equities"]:
                             st.markdown(
@@ -4887,9 +5145,12 @@ if run_button:
                                 )
                             else:
                                 _p_label = f"{prev_date:%m/%d/%Y} close"
+                            _p_sz = signals.get("prev_sizing_note") or ""
                             st.caption(
                                 f"Previous month-end signal ({_p_label}): "
                                 + " | ".join(prev_parts)
+                                + (" (inverse volatility, " + _p_sz[len("Inverse vol ("):]
+                                   if _p_sz.startswith("Inverse vol (ERC fallback") else "")
                             )
 
                         # Current leverage signal
@@ -5263,7 +5524,10 @@ if run_button:
 
                     # ---- TRADE LOG ----
                     st.subheader("Trade Log")
-                    st.caption("Most recent trades shown first. Expand to see all monthly rebalance decisions.")
+                    st.caption(
+                        "Most recent trades shown first. Expand to see all monthly rebalance decisions. "
+                        f"The sizing column says how each month was weighted ({sizing_info['label']} in this run)."
+                    )
                     trade_df_display = trade_df.iloc[::-1].reset_index(drop=True)
                     with st.expander("Show full trade log"):
                         st.dataframe(trade_df_display, use_container_width=True, hide_index=True)
@@ -5275,7 +5539,7 @@ if run_button:
                         st.download_button(
                             "Download Trade Log (CSV)",
                             data=trade_df.to_csv(index=False),
-                            file_name="Trade Log.csv",
+                            file_name=f"Trade Log ({sizing_info['file_tag']}).csv",
                             mime="text/csv",
                         )
                     with col_dl2:
@@ -5286,10 +5550,11 @@ if run_button:
                         })
                         export_df["strategy_cumulative"] = INITIAL_CAPITAL * (1 + export_df["strategy_return"]).cumprod()
                         export_df["benchmark_cumulative"] = INITIAL_CAPITAL * (1 + export_df["benchmark_return"]).cumprod()
+                        export_df["position_sizing"] = sizing_info["label"]
                         st.download_button(
                             "Download Monthly Returns (CSV)",
                             data=export_df.to_csv(index=False),
-                            file_name="Monthly Returns.csv",
+                            file_name=f"Monthly Returns ({sizing_info['file_tag']}).csv",
                             mime="text/csv",
                         )
 
@@ -5305,7 +5570,7 @@ if run_button:
                         eq_display = f"Top {equity_top_n} from {', '.join(selected_equity)}" if equity_top_n > 0 else "None"
                         st.markdown(f"**Equity selection:** {eq_display}")
                     with col_cfg3:
-                        st.markdown(f"**Final:** Top {final_top_n} by {main_lookback_label}, risk parity ({vol_months}mo vol)")
+                        st.markdown(f"**Final:** Top {final_top_n} by {main_lookback_label}, {sizing_info['final']}")
                         if leverage_params_ui.get("enabled", False):
                             lp = leverage_params_ui
                             if lp.get("method") == "constant":
@@ -5468,8 +5733,9 @@ if run_button:
                         )
                     st.caption(
                         "All prices are dividend- and split-adjusted (total return). "
-                        + exec_note +
-                        "Sortino ratio uses BIL as the risk-free rate."
+                        + exec_note
+                        + sizing_info["note"] + " "
+                        + "Sortino ratio uses BIL as the risk-free rate."
                         + lev_note
                         + gate_note
                         + sma_gate_note
