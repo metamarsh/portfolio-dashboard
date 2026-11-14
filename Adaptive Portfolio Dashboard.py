@@ -195,7 +195,9 @@ DEFAULT_FIXED_ASSETS = {
     "BTAL":    "Defensive Equity Factor",
     "HGER":    "Commodity (All-Weather)",
     "IBIT":    "Bitcoin (Spot ETF)",
-    "BTC-USD": "Bitcoin (Spot Price)",
+    # BTC-USD's checkbox was removed November 13, 2026. BTC-USD is still IBIT's
+    # backfill source, and it can be typed into the custom tickers box like
+    # any other ticker.
 }
 
 # Fixed assets that may start after the backtest start. Instead of blocking the
@@ -3406,7 +3408,14 @@ def plot_leverage_timeline(trade_df, leverage_params):
 
 st.sidebar.title("Backtest Parameters")
 
-# ---- MAIN STRATEGY (first position) ----
+# ---- RUN BACKTEST (first position, top of the sidebar) ----
+# Moved here from below the G1 Cash Rule section November 13, 2026, so it is
+# in view without scrolling. The script still reads every control below on
+# the same run, so the button's place does not change what a run uses.
+run_button = st.sidebar.button("Run Backtest", type="primary", use_container_width=True)
+st.sidebar.markdown("---")
+
+# ---- MAIN STRATEGY (second position) ----
 st.sidebar.header("Main Strategy")
 
 main_lookback_label = st.sidebar.selectbox(
@@ -3778,10 +3787,6 @@ with st.sidebar.expander("G1 Cash Rule", expanded=False):
         }
         st.caption("Rule: " + g1_label(g1_ui) + ".")
 
-# ---- RUN BACKTEST (second position) ----
-st.sidebar.markdown("---")
-run_button = st.sidebar.button("Run Backtest", type="primary", use_container_width=True)
-
 # ---- PERIOD (third position) ----
 st.sidebar.markdown("---")
 st.sidebar.header("Backtest Period")
@@ -3806,14 +3811,14 @@ try:
 except (ValueError, IndexError):
     download_start = "2011-01-01"
 
-# ---- FIXED BASKET (fourth, collapsible) ----
+# ---- FIXED BASKET (fourth, open by default since November 13, 2026) ----
 st.sidebar.markdown("---")
 
 # IBIT is pre-selected since November 3, 2026. It joins the basket once it has
 # enough history (JOIN_WHEN_AVAILABLE), so a 1995 start still runs.
 default_fixed = ["TLT", "GLDM", "BIL", "BTAL", "HGER", "IBIT"]
 selected_fixed = []
-with st.sidebar.expander("Fixed Basket Assets", expanded=False):
+with st.sidebar.expander("Fixed Basket Assets", expanded=True):
     st.caption("Toggle built-in assets and/or add custom tickers below.")
     for ticker, label in DEFAULT_FIXED_ASSETS.items():
         checked = st.checkbox(
@@ -3833,10 +3838,10 @@ with st.sidebar.expander("Fixed Basket Assets", expanded=False):
     custom_fixed_tickers = [t.strip().upper() for t in custom_fixed_input.split(",") if t.strip()]
     selected_fixed.extend(custom_fixed_tickers)
 
-# ---- EQUITY (fifth, collapsible) ----
+# ---- EQUITY (fifth, open by default since November 13, 2026) ----
 default_equity = ["QQQ", "IWM", "DXJ", "EMXC"]
 selected_equity = []
-with st.sidebar.expander("Equity Sub-Selection", expanded=False):
+with st.sidebar.expander("Equity Sub-Selection", expanded=True):
     st.caption("Choose which equity ETFs are eligible for monthly ranking.")
     for ticker, label in DEFAULT_EQUITY_ETFS.items():
         checked = st.checkbox(
