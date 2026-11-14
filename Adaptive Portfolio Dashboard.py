@@ -3412,7 +3412,7 @@ st.sidebar.title("Backtest Parameters")
 # Moved here from below the G1 Cash Rule section November 13, 2026, so it is
 # in view without scrolling. The script still reads every control below on
 # the same run, so the button's place does not change what a run uses.
-run_button = st.sidebar.button("Run Backtest", type="primary", use_container_width=True)
+run_button = st.sidebar.button("Run Backtest", type="primary", width="stretch")
 st.sidebar.markdown("---")
 
 # ---- MAIN STRATEGY (second position) ----
@@ -4319,7 +4319,7 @@ if run_button:
 
             if data_issues:
                 st.error("**Backtest blocked.** The following assets do not have enough data for your selected start date:")
-                st.dataframe(pd.DataFrame(data_issues), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(data_issues), width="stretch", hide_index=True)
 
                 latest_inception = pd.Timestamp("1900-01-01")
                 late_tickers = {lt for lt, _ in late_joiners}
@@ -5069,7 +5069,7 @@ if run_button:
                     )
                     trade_df_display = trade_df.iloc[::-1].reset_index(drop=True)
                     with st.expander("Show full trade log"):
-                        st.dataframe(trade_df_display, use_container_width=True, hide_index=True)
+                        st.dataframe(trade_df_display, width="stretch", hide_index=True)
 
                     # ---- DOWNLOADS ----
                     st.subheader("Downloads")
@@ -5138,7 +5138,7 @@ if run_button:
                     if backfill_info:
                         st.markdown("---")
                         with st.expander("Backfill details (which ticker covers which dates)"):
-                            st.dataframe(pd.DataFrame(backfill_info), use_container_width=True, hide_index=True)
+                            st.dataframe(pd.DataFrame(backfill_info), width="stretch", hide_index=True)
 
                     # ---- DATA ADJUSTMENTS: why each asset's history is built as it is ----
                     _run_assets = list(dict.fromkeys(
@@ -5234,7 +5234,7 @@ else:
         st.caption(f"Loaded from {os.path.basename(RESULTS_FILE)}")
         try:
             log_df = pd.read_excel(RESULTS_FILE, engine="openpyxl")
-            st.dataframe(log_df, use_container_width=True, hide_index=True)
+            st.dataframe(log_df, width="stretch", hide_index=True)
         except Exception as e:
             st.warning(f"Could not read results log: {e}")
 
