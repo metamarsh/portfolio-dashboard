@@ -53,3 +53,6 @@ EMXC Backfill Check*
 EMXC Backfill Recommendation*
 EEM vs EMXC Basket Test*
 DBC vs HGER Basket Test*
+
+# Reality Check: saved neighbor backtests (rebuilt on demand)
+reality_check_cache/

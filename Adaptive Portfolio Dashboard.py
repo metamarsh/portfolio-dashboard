@@ -1926,6 +1926,17 @@ def run_backtest(daily_prices, monthly_prices, params):
     gains a "g1" column with each month's outcome. With it off, every output
     is exactly what it was before the rule was added.
 
+    Signal day (params["signal_offset"]; added November 16, 2026, for the
+    Reality Check panel): k puts the signal close k trading days before the
+    month's last trading day T, with the trade at the next close. 1 is
+    "last_day" and 0 is "first_day", and both run through those paths
+    unchanged. Any other k trades 1 - k trading days from T (earlier for a
+    positive k), reads its signal at the close before, and measures each
+    lookback from an earlier month-end close to that signal close, as
+    "last_day" does. Left out, exec_timing alone decides, as before.
+    params["fast_daily"] computes the daily equity curve with arrays, the
+    same arithmetic in the same order as the day-by-day loop.
+
     Position sizing (params["sizing"]; added November 13, 2026):
     compute_position_weights weights the final holdings by equal risk
     contribution ("erc", the app's default) or inverse volatility
@@ -1947,6 +1958,17 @@ def run_backtest(daily_prices, monthly_prices, params):
     backtest_end = resolve_backtest_end(params.get("backtest_end", ""))
     leverage_params = params.get("leverage_params", {"enabled": False})
     exec_timing = params.get("exec_timing", "last_day")
+    # Signal day and the fast daily curve (see the docstring; November 16, 2026).
+    signal_offset = params.get("signal_offset")
+    if signal_offset is not None:
+        signal_offset = int(signal_offset)
+        if signal_offset == 1:
+            exec_timing, signal_offset = "last_day", None
+        elif signal_offset == 0:
+            exec_timing, signal_offset = "first_day", None
+        else:
+            exec_timing = "offset"
+    fast_daily = bool(params.get("fast_daily"))
     cost_per_side = params.get("cost_per_side", DEFAULT_COST_PER_SIDE)
     cost_per_side = float(cost_per_side) if cost_per_side is not None else 0.0
     sizing = params.get("sizing", SIZING_IF_UNSET)
@@ -1993,7 +2015,15 @@ def run_backtest(daily_prices, monthly_prices, params):
         # month. Skip incomplete months (label beyond the latest data).
         if month_end_date > all_trading_dates[-1] and month_end_date.month == all_trading_dates[-1].month and month_end_date.year == all_trading_dates[-1].year:
             return None
-        return last_trading_day(month_end_date)
+        last_day = last_trading_day(month_end_date)
+        if exec_timing != "offset" or last_day is None:
+            return last_day
+        # "offset": the trade is 1 - signal_offset trading days from the
+        # month's last trading day (earlier for a positive offset).
+        pos = int(all_trading_dates.searchsorted(last_day)) + 1 - signal_offset
+        if pos < 0 or pos >= len(all_trading_dates):
+            return None
+        return all_trading_dates[pos]
 
     # Forward-filled daily prices for signal-date lookups (computed once)
     daily_ffill = daily_prices.ffill()
@@ -2022,7 +2052,7 @@ def run_backtest(daily_prices, monthly_prices, params):
         #                  trading day's close). No look-ahead.
         #   "first_day" -> the month-end itself (execution is the next
         #                  trading day, so there is already a 1-day lag).
-        if exec_timing == "last_day":
+        if exec_timing in ("last_day", "offset"):
             signal_date = exec_date_entry - pd.Timedelta(days=1)
         else:
             signal_date = rebal_date
@@ -2031,7 +2061,7 @@ def run_backtest(daily_prices, monthly_prices, params):
             """Monthly closes through rebal_date, with the current month's
             value replaced by the close as of signal_date (last_day mode)."""
             frame = monthly_prices[cols].loc[:rebal_date].copy()
-            if exec_timing == "last_day" and len(frame) > 0:
+            if exec_timing in ("last_day", "offset") and len(frame) > 0:
                 asof = daily_ffill[cols].loc[:signal_date]
                 if len(asof) > 0:
                     frame.iloc[-1] = asof.iloc[-1]
@@ -2185,6 +2215,26 @@ def run_backtest(daily_prices, monthly_prices, params):
             ep = daily_prices[t].loc[:exec_date_entry].dropna()
             if len(ep) > 0 and ep.iloc[-1] != 0:
                 entry_px[t] = ep.iloc[-1]
+
+        if fast_daily and n_holding_days > 0:
+            # The loop below with arrays (November 16, 2026): the same
+            # arithmetic in the same order, read from the forward-filled
+            # prices, which hold each day's last price at or before it.
+            _dwr = np.zeros(n_holding_days)
+            for t in final_holdings:
+                if t not in entry_px:
+                    continue
+                _dwr = _dwr + weights.get(t, 0.0) * (
+                    (daily_ffill[t].reindex(holding_days).to_numpy(dtype=float) / entry_px[t]) - 1.0
+                )
+            _acc = np.zeros(n_holding_days)
+            if monthly_borrow_cost > 0:
+                _acc = monthly_borrow_cost * np.arange(1, n_holding_days + 1) / n_holding_days
+            _dcf = np.full(n_holding_days, cost_factor)
+            _dcf[0] = 1.0
+            _vals = cumulative_multiplier * _dcf * (1 + _dwr * lev_mult - _acc) * INITIAL_CAPITAL
+            daily_portfolio_values.update(zip(holding_days, _vals.tolist()))
+            holding_days = holding_days[:0]   # the loop below then has nothing left to do
 
         for day_idx, day in enumerate(holding_days):
             day_weighted_return = 0.0
@@ -2537,8 +2587,10 @@ def compute_current_signals(daily_prices, monthly_prices, params):
         basket                full basket of eligible tickers
         prev_month_end_date   the most recent COMPLETED calendar month-end
                               (None if no prior month-end is available)
-        prev_exec_date        last trading day of that month, when the
-                              rebalance trades ("last_day" mode only)
+        prev_exec_date        the day that month's rebalance trades: its last
+                              trading day, or the day params["signal_offset"]
+                              picks (None in "first_day" mode, and when that
+                              day has not happened yet)
         prev_data_date        the close the prev signal is computed from:
                               the trading day before prev_exec_date
         prev_holdings         list of tickers from the prev month-end signal
@@ -2603,13 +2655,25 @@ def compute_current_signals(daily_prices, monthly_prices, params):
         prev_month_end_date = prev_candidates[-1]
         prev_signal_date = prev_month_end_date
         prev_monthly = monthly_prices
-        if params.get("exec_timing", "last_day") == "last_day":
+        # The trade day is params["signal_offset"] when set (any of the Trade
+        # execution timing choices, November 17, 2026), else the exec_timing
+        # choice: 1 is the last trading day ("last_day"), 0 the first trading
+        # day of next month ("first_day"). Any other k trades 1 - k trading days
+        # from the month's last trading day, as run_backtest does; a day that
+        # has not happened yet leaves the month-end close reference below.
+        _k = params.get("signal_offset")
+        _k = int(_k) if _k is not None else (0 if params.get("exec_timing", "last_day") == "first_day" else 1)
+        if _k != 0:
             cal = market_trading_dates(daily_prices)
             in_month = cal[(cal.year == prev_month_end_date.year)
                            & (cal.month == prev_month_end_date.month)
                            & (cal <= prev_month_end_date)]
             if len(in_month) > 0:
                 prev_exec_date = in_month[-1]
+                if _k != 1:
+                    _pos = int(cal.searchsorted(prev_exec_date)) + 1 - _k
+                    prev_exec_date = cal[_pos] if 0 <= _pos < len(cal) else None
+            if prev_exec_date is not None:
                 prev_signal_date = prev_exec_date - pd.Timedelta(days=1)
                 asof = daily_prices.ffill().loc[:prev_signal_date]
                 if len(asof) > 0:
@@ -3403,6 +3467,1439 @@ def plot_leverage_timeline(trade_df, leverage_params):
 
 
 # =============================================================================
+# REALITY CHECK  (added November 16, 2026)
+# =============================================================================
+# A results section of its own, below the Performance Summary. It repeats the
+# backtest on the settings one step away from the ones in the sidebar and says
+# how much of the tested result survives: the main lookback legs (each leg one
+# month either way), the trade day (params["signal_offset"] in run_backtest),
+# position sizing, the volatility window, the holdings count and the equity
+# lookback. Every number it shows is a backtest from run_backtest itself, with
+# the run's own prices, backfills, costs, leverage and G1 settings.
+#
+#   Neighbors' average   the lookbacks one step away on each leg, on the trade
+#                        day and the days either side of it (up to 27 runs)
+#   Typical nearby run   the median of the same lookbacks on 21 trade days, the
+#                        19th-to-last trading day of the month to the 2nd
+#                        trading day of next month (up to 189 runs; the Full
+#                        check)
+#   Realistic range      the span between those two
+#
+# The panel names a run by its trade day (rc_trade_noun), the day the month-end
+# trade is made, and any of the 21 can be picked in the sidebar (November 17,
+# 2026). Trade days other than the sidebar's original two run on the engine's own
+# calendar: earlier months at their month-end closes, the current month at the
+# signal close. A second basket can be run beside the run's own (Basket B, below;
+# opt-in). Finished runs are saved in reality_check_cache\ under the settings and
+# a fingerprint of the prices, so a backtest that has run once is not run
+# again until the prices behind it change.
+#
+# The mockup Tyler approved, and the script that pulled its numbers:
+# C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System\Backtest Engine\Robustness Panel 2026-11-16\
+
+import hashlib as _rc_hashlib
+import html as _rc_html
+import pickle as _rc_pickle
+import time as _rc_time
+
+RC_CACHE_DIR = os.path.join(_base_dir, "reality_check_cache")
+RC_CACHE_FILE = os.path.join(RC_CACHE_DIR, "reality_check_runs.pkl")
+RC_CACHE_MAX = 4000                         # saved runs kept (the oldest go first)
+RC_STRIP_DAYS = [5, 4, 3, 2, 1, 0, -1]      # the trade days charted, 5th to last ... 2nd of next (signal days T-5 to T+1)
+RC_WIDE_DAYS = list(range(19, -2, -1))      # the Full check's 21 trade days (signal days T-19 to T+1)
+RC_MILD = 0.05                              # a setting more than this above its neighbors is a mild peak
+RC_SPIKE = 0.15                             # and more than this, a spike
+RC_MODE_OPTIONS = {"Off": "off", "Quick check": "quick", "Full check": "full"}
+# On a PC the neighbor runs go to a pool of worker processes (reality_check_worker.py),
+# so the Quick check is the starting choice there. Anywhere else (the deployed
+# app, which has one small processor) they would run one at a time, so the
+# section starts off and is switched on by hand.
+RC_ON_PC = os.name == "nt"
+RC_MODE_DEFAULT = "quick" if RC_ON_PC else "off"
+RC_ENGINE_FILE = os.path.abspath(__file__) if "__file__" in dir() else None
+RC_POOL_MIN = 3                             # fewer new runs than this are not worth a pool
+RC_POOL_MAX = 12                            # worker processes at most
+RC_SIZING_NAMES = {"erc": "Equal risk contribution", "inverse_vol": "Inverse volatility"}
+# Inverse volatility was the sizing method until November 2026, and the app
+# called it risk parity then; the panel says so wherever it names it.
+RC_SIZING_NOTES = {"inverse_vol": "the method used until November 2026, previously called risk parity"}
+RC_TONES = {"good": ("#DDF3E4", "#0F6B3A"), "warn": ("#FFF0C7", "#7A5300"),
+            "bad": ("#FBDDDD", "#A32222"), "neutral": ("#EEEEF2", "#55556A")}
+RC_GLYPHS = {"good": "\u2713", "warn": "!", "bad": "\u2715", "neutral": "\u2013", "up": "\u2191", "down": "\u2193"}
+
+
+# ---- settings one step away -------------------------------------------------
+
+def rc_day_name(k):
+    """Signal day k trading days before the month's last trading day T."""
+    return f"T-{k}" if k > 0 else ("T" if k == 0 else f"T+{-k}")
+
+
+def rc_current_offset(params):
+    """The run's own signal day: 1 for "last_day" (signal T-1), 0 for "first_day" (signal T)."""
+    k = params.get("signal_offset")
+    if k is not None:
+        return int(k)
+    return 0 if params.get("exec_timing", "last_day") == "first_day" else 1
+
+
+# ---- trade days (added November 17, 2026) -----------------------------------
+# The sidebar and the panel name a run by the day the month-end trade is made,
+# its trade day. Inside, a run is still keyed by k = params["signal_offset"]:
+# the signal is read at the close k trading days before the month's last
+# trading day T, and the trade is made at the next close. So k >= 1 trades on
+# the k-th trading day from the end of the month (1 is the last trading day)
+# and k <= 0 on the (1 - k)th trading day of the next month (0 is the first).
+
+def rc_ordinal(n):
+    """1 -> "1st", 2 -> "2nd", 11 -> "11th", 21 -> "21st"."""
+    n = int(n)
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
+def rc_cap(s):
+    """The text with its first letter capitalized."""
+    return s[:1].upper() + s[1:]
+
+
+def rc_trade_noun(k):
+    """Signal day k as its trade day: "last trading day", "5th-to-last trading day",
+    "first trading day of next month", "2nd trading day of next month"."""
+    k = int(k)
+    if k == 1:
+        return "last trading day"
+    if k > 1:
+        return f"{rc_ordinal(k)}-to-last trading day"
+    if k == 0:
+        return "first trading day of next month"
+    return f"{rc_ordinal(1 - k)} trading day of next month"
+
+
+def rc_trade_phrase(k):
+    """The trade day in a sentence: "the 5th-to-last trading day"."""
+    return "the " + rc_trade_noun(k)
+
+
+def rc_trade_short(k):
+    """The label under a chart bar, which the panel wraps onto two short lines."""
+    k = int(k)
+    if k == 1:
+        return "Last day"
+    if k > 1:
+        return f"{rc_ordinal(k)} to last"
+    return "1st of next" if k == 0 else f"{rc_ordinal(1 - k)} of next"
+
+
+def rc_exec_label(k):
+    """The sidebar's name for a trade day. The first two are the app's original labels, word for word."""
+    k = int(k)
+    if k == 1:
+        return "Last trading day of month (at close)"
+    if k == 0:
+        return "First trading day of next month (at close)"
+    return rc_cap(rc_trade_noun(k)) + (" of month" if k > 1 else "") + " (at close)"
+
+
+def rc_trade_each(k):
+    """The trade day for the results footnote: "5th-to-last trading day of each month"."""
+    return rc_trade_noun(k) + (" of each month" if int(k) > 1 else "")
+
+
+def rc_strip_days(k0):
+    """The seven signal days the Trade timing card charts: T-5 to T+1 (5th to last ... 2nd of next), as
+    always, when the run's own day is among them; otherwise seven days centered on it, kept inside the 21."""
+    if k0 in RC_STRIP_DAYS:
+        return list(RC_STRIP_DAYS)
+    top = max(min(RC_WIDE_DAYS[0], k0 + 3), RC_WIDE_DAYS[-1] + 6)
+    return [top - j for j in range(7)]
+
+
+def rc_lb_name(lbs):
+    return "/".join(str(int(x)) for x in lbs)
+
+
+def rc_lookback_cells(lbs):
+    """The lookback and the ones a month away on each leg (one or two legs)."""
+    lbs = [int(x) for x in lbs]
+    if len(lbs) == 1:
+        return [(x,) for x in (lbs[0] - 1, lbs[0], lbs[0] + 1) if x >= 1]
+    if len(lbs) == 2:
+        s, l = lbs
+        return [(a, b) for a in (s - 1, s, s + 1) for b in (l - 1, l, l + 1) if 1 <= a < b]
+    return [tuple(lbs)]
+
+
+def rc_spec(params, lb=None, k=None, sizing=None, vol=None, topn=None, eq=None):
+    """One run, as the six settings the panel varies."""
+    return (tuple(int(x) for x in (params["main_lookbacks"] if lb is None else lb)),
+            int(rc_current_offset(params) if k is None else k),
+            sizing or params.get("sizing", SIZING_IF_UNSET),
+            int(params["vol_months"] if vol is None else vol),
+            int(params["final_top_n"] if topn is None else topn),
+            tuple(int(x) for x in (params["equity_lookbacks"] if eq is None else eq)))
+
+
+def rc_spec_params(params, spec):
+    """The run's params with one spec's settings in place (leg weights unchanged)."""
+    lb, k, sizing, vol, topn, eq = spec
+    p = dict(params)
+    p.update(main_lookbacks=list(lb), signal_offset=int(k), sizing=sizing, vol_months=int(vol),
+             final_top_n=int(topn), equity_lookbacks=list(eq), fast_daily=True)
+    return p
+
+
+def rc_plan(params, extras=()):
+    """Every run the panel reads, by group. extras: "topn" adds the holdings count, "eq" the equity lookback."""
+    k0 = rc_current_offset(params)
+    cells = rc_lookback_cells(params["main_lookbacks"])
+    near_days = [d for d in (k0 + 1, k0, k0 - 1) if RC_WIDE_DAYS[-1] <= d <= RC_WIDE_DAYS[0]]
+    sizing0 = params.get("sizing", SIZING_IF_UNSET)
+    v0 = int(params["vol_months"])
+    n0 = int(params["final_top_n"])
+    plan = {
+        "center": rc_spec(params),
+        "cells": [rc_spec(params, lb=c) for c in cells],
+        "block": [rc_spec(params, lb=c, k=d) for c in cells for d in near_days],
+        "strip": [rc_spec(params, k=d) for d in rc_strip_days(k0)],
+        "sizing": {s: [rc_spec(params, lb=c, sizing=s) for c in cells] for s in SIZING_LABELS if s != sizing0},
+        "vol": {v: [rc_spec(params, lb=c, vol=v) for c in cells]
+                for v in sorted({min(24, max(3, x)) for x in (v0 - 6, v0 + 6, v0 + 12)} - {v0})},
+        "topn": ({n: rc_spec(params, topn=n) for n in (n0 - 1, n0 + 1) if n >= 1} if "topn" in extras else {}),
+        "eq": {},
+        "wide": [rc_spec(params, lb=c, k=d) for c in cells for d in RC_WIDE_DAYS],
+    }
+    eq0 = tuple(int(x) for x in params.get("equity_lookbacks", []))
+    if ("eq" in extras and params.get("equity_top_n", 0) > 0 and len(params.get("equity_tickers", [])) > 0
+            and 1 <= len(eq0) <= 2):
+        for c in rc_lookback_cells(eq0):
+            if sum(1 for x, y in zip(c, eq0) if x != y) == 1:
+                plan["eq"][c] = rc_spec(params, eq=c)
+    return plan
+
+
+def rc_wanted(plan, mode):
+    """The runs a check needs, in running order, without repeats."""
+    specs = [plan["center"]] + plan["block"] + plan["strip"] + plan["cells"]
+    for group in ("sizing", "vol"):
+        for lst in plan[group].values():
+            specs += lst
+    specs += list(plan["topn"].values()) + list(plan["eq"].values())
+    if mode == "full":
+        specs += plan["wide"]
+    seen, out = set(), []
+    for s in specs:
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+# ---- saved runs -------------------------------------------------------------
+
+def _rc_plain(v):
+    """A setting as text for the saved-run key (a price or yield series by its content)."""
+    if isinstance(v, (pd.Series, pd.DataFrame)):
+        return "series:" + _rc_hashlib.sha1(pd.util.hash_pandas_object(v, index=True).values.tobytes()).hexdigest()[:16]
+    if isinstance(v, dict):
+        return {str(k): _rc_plain(x) for k, x in sorted(v.items(), key=lambda kv: str(kv[0]))}
+    if isinstance(v, (list, tuple)):
+        return [_rc_plain(x) for x in v]
+    if isinstance(v, (np.floating, float)):
+        return round(float(v), 12)
+    if isinstance(v, (np.integer, int, bool, str)) or v is None:
+        return v
+    return str(v)
+
+
+def rc_price_cut(daily_prices, params):
+    """The last market day of the last finished month: the month before the one the prices end in, which is
+    the last month run_backtest trades (or the backtest end, if that is earlier). It does not depend on the
+    run's own signal day, so runs on different signal days share their saved neighbors."""
+    dates = market_trading_dates(daily_prices)
+    last = dates[-1]
+    prior = dates[dates < pd.Timestamp(year=last.year, month=last.month, day=1)]
+    cut = prior[-1] if len(prior) else last
+    end = resolve_backtest_end(params.get("backtest_end", ""))
+    if end:
+        try:
+            before = dates[dates <= pd.Timestamp(end)]
+            if len(before) and before[-1] < cut:
+                cut = before[-1]
+        except (ValueError, TypeError):
+            pass
+    return cut
+
+
+def rc_fingerprint(daily_prices, params, end_date):
+    """The prices a run reads, by their daily returns through three market days after end_date.
+
+    Returns, not prices, so a dividend rescale of a whole history leaves it
+    unchanged; cut just after the last finished month (rc_price_cut), so new
+    days inside an unfinished month leave it unchanged too. The three days
+    after the cut are in it because signal days after the month-end trade
+    on them; early in a month, fewer exist, and their count is part of it.
+    """
+    cols = set(params.get("fixed_tickers", [])) | set(params.get("equity_tickers", [])) | {"BIL", BENCHMARK_TICKER}
+    g1 = params.get("g1") or {}
+    if g1.get("enabled") and g1.get("fund"):
+        cols.add(g1["fund"])
+    lev = params.get("leverage_params") or {}
+    if lev.get("ticker"):
+        cols.add(lev["ticker"])
+    cols = sorted(c for c in cols if c in daily_prices.columns)
+    end_date = pd.Timestamp(end_date)
+    dates = market_trading_dates(daily_prices)
+    after = min(3, int((dates > end_date).sum()))
+    later = dates[dates > end_date]
+    hash_end = later[after - 1] if after > 0 else end_date
+    rets = daily_prices[cols].loc[:hash_end].ffill().pct_change().round(8) + 0.0
+    digest = _rc_hashlib.sha1(pd.util.hash_pandas_object(rets, index=True).values.tobytes()).hexdigest()[:20]
+    return f"{digest}-{','.join(cols)}-{after}"
+
+
+def rc_base_key(params, fingerprint):
+    """Everything a neighbor run shares with the main run, as text."""
+    base = {
+        "fixed": list(params.get("fixed_tickers", [])),
+        "equity": list(params.get("equity_tickers", [])),
+        "equity_top_n": params.get("equity_top_n"),
+        "equity_w": list(params.get("equity_lookback_weights", [])),
+        "main_w": list(params.get("main_lookback_weights", [])),
+        "cost": params.get("cost_per_side", DEFAULT_COST_PER_SIDE),
+        "start": params.get("backtest_start"),
+        "end": resolve_backtest_end(params.get("backtest_end", "")),
+        "leverage": params.get("leverage_params") or {},
+        "g1": params.get("g1") or {},
+        "prices": fingerprint,
+    }
+    return json.dumps(_rc_plain(base), sort_keys=True)
+
+
+def rc_key(base_key, spec):
+    return _rc_hashlib.sha1((base_key + "|" + repr(spec)).encode("utf-8")).hexdigest()
+
+
+def rc_cache_load():
+    try:
+        with open(RC_CACHE_FILE, "rb") as fh:
+            cache = _rc_pickle.load(fh)
+        return cache if isinstance(cache, dict) else {}
+    except Exception:
+        return {}
+
+
+def rc_cache_save(cache):
+    """Write the saved runs (oldest dropped past RC_CACHE_MAX). Never raises."""
+    try:
+        if len(cache) > RC_CACHE_MAX:
+            keep = sorted(cache, key=lambda k: cache[k].get("t", 0.0))[-RC_CACHE_MAX:]
+            for k in set(cache) - set(keep):
+                del cache[k]
+        os.makedirs(RC_CACHE_DIR, exist_ok=True)
+        tmp = RC_CACHE_FILE + ".tmp"
+        with open(tmp, "wb") as fh:
+            _rc_pickle.dump(cache, fh, protocol=4)
+        os.replace(tmp, RC_CACHE_FILE)
+        return True
+    except Exception:
+        return False
+
+
+# ---- running the neighbors --------------------------------------------------
+
+def rc_pool_workers():
+    """Worker processes to use: none off a PC, else the processor count less two, up to RC_POOL_MAX."""
+    if not RC_ON_PC or RC_ENGINE_FILE is None:
+        return 1
+    return max(1, min(RC_POOL_MAX, (os.cpu_count() or 2) - 2))
+
+
+def rc_run_parallel(daily_prices, monthly_prices, rf_monthly, jobs, workers, on_done=None):
+    """Run (key, params) jobs in worker processes; returns {key: entry} for the ones that finished.
+
+    Each worker loads this file's engine code once (reality_check_worker.py) and reads the run's prices from
+    a temporary pickle, which is deleted afterward. Raises if the pool cannot start; the caller then runs
+    the jobs one at a time.
+    """
+    import concurrent.futures
+    import tempfile
+    if _base_dir not in sys.path:
+        sys.path.insert(0, _base_dir)
+    import reality_check_worker as worker
+    tmp = tempfile.NamedTemporaryFile(prefix="reality_check_", suffix=".pkl", delete=False)
+    out = {}
+    try:
+        _rc_pickle.dump({"daily": daily_prices, "monthly": monthly_prices, "rf": rf_monthly}, tmp, protocol=4)
+        tmp.close()
+        with concurrent.futures.ProcessPoolExecutor(
+            max_workers=workers, initializer=worker.init, initargs=(RC_ENGINE_FILE, tmp.name)
+        ) as pool:
+            # Streamlit runs this page as the __main__ module, and a new worker process imports its
+            # parent's __main__ by file name, which would run the whole page again in every worker.
+            # The file name is hidden while the workers start (they start as the jobs are submitted).
+            main_mod = sys.modules.get("__main__")
+            hidden = main_mod is not None and "__file__" in getattr(main_mod, "__dict__", {})
+            if hidden:
+                main_file = main_mod.__dict__.pop("__file__")
+            try:
+                futures = [pool.submit(worker.run, job) for job in jobs]
+            finally:
+                if hidden:
+                    main_mod.__dict__["__file__"] = main_file
+            for fut in concurrent.futures.as_completed(futures):
+                key, entry = fut.result()
+                out[key] = entry
+                if on_done is not None:
+                    on_done(len(out))
+    finally:
+        try:
+            tmp.close()
+            os.remove(tmp.name)
+        except OSError:
+            pass
+    return out
+
+
+def rc_entry(results_df, daily_equity, rf_monthly):
+    """What the panel keeps of one run: its monthly returns and three headline figures."""
+    if results_df is None or len(results_df) == 0:
+        return {"r": pd.Series(dtype=float), "S": np.nan, "C": np.nan, "D": np.nan, "t": _rc_time.time()}
+    r = results_df["portfolio_return"].dropna().astype(float)
+    m = compute_metrics(r, rf_monthly=rf_monthly, daily_equity=daily_equity)
+
+    def num(key):
+        v = m.get(key, np.nan)
+        return float(v) if isinstance(v, (int, float, np.floating, np.integer)) else np.nan
+
+    return {"r": r, "S": num("Sortino Ratio"), "C": num("CAGR"), "D": num("Max Drawdown (Daily)"),
+            "t": _rc_time.time()}
+
+
+def rc_compute(daily_prices, monthly_prices, params, results_df, daily_equity, rf_monthly, mode,
+               cache=None, progress=None, parallel=True, extras=()):
+    """Run (or reuse) every backtest the check needs.
+
+    Returns (plan, runs, stats): runs maps a spec to its entry; stats counts
+    the runs needed, reused and run now, and the seconds the new ones took.
+    The main run is the plan's center and is never run again. In a Quick
+    check, Full-check runs already saved are read too, so the typical nearby
+    run shows whenever it is known.
+    """
+    t0 = _rc_time.time()
+    plan = rc_plan(params, extras)
+    wanted = rc_wanted(plan, mode)
+    base = rc_base_key(params, rc_fingerprint(daily_prices, params, rc_price_cut(daily_prices, params)))
+    runs = {plan["center"]: rc_entry(results_df, daily_equity, rf_monthly)}
+    if cache is not None:
+        cache[rc_key(base, plan["center"])] = runs[plan["center"]]
+    todo = []
+    for spec in wanted:
+        if spec in runs:
+            continue
+        key = rc_key(base, spec)
+        if cache is not None and key in cache:
+            runs[spec] = cache[key]
+        else:
+            todo.append((spec, key))
+    pending, used_workers = list(todo), 1
+    workers = min(rc_pool_workers(), len(pending)) if parallel else 1
+    if workers >= 2 and len(pending) >= RC_POOL_MIN:
+        try:
+            got = rc_run_parallel(
+                daily_prices, monthly_prices, rf_monthly,
+                [(key, rc_spec_params(params, spec)) for spec, key in pending], workers,
+                (lambda n: progress(n, len(todo))) if progress is not None else None,
+            )
+            used_workers = workers
+        except Exception:
+            got = {}
+        for spec, key in pending:
+            if key in got:
+                runs[spec] = got[key]
+                if cache is not None:
+                    cache[key] = got[key]
+        pending = [(spec, key) for spec, key in pending if key not in got]
+    n_before = len(todo) - len(pending)
+    for i, (spec, key) in enumerate(pending):
+        if progress is not None:
+            progress(n_before + i, len(todo))
+        try:
+            res, _trades, deq = run_backtest(daily_prices, monthly_prices, rc_spec_params(params, spec))
+            runs[spec] = rc_entry(res, deq, rf_monthly)
+        except Exception:
+            runs[spec] = rc_entry(None, None, rf_monthly)
+        if cache is not None:
+            cache[key] = runs[spec]
+    if mode != "full" and cache is not None:
+        for spec in plan["wide"]:
+            if spec not in runs:
+                key = rc_key(base, spec)
+                if key in cache:
+                    runs[spec] = cache[key]
+    stats = {"need": len(wanted), "fresh": len(todo), "reused": len(wanted) - len(todo),
+             "secs": _rc_time.time() - t0, "base": base, "workers": used_workers}
+    return plan, runs, stats
+
+
+# ---- reading the runs -------------------------------------------------------
+
+def rc_sortino(r, rf_monthly):
+    """compute_metrics' Sortino on a slice of monthly returns."""
+    r = r.dropna()
+    n = len(r)
+    if n == 0:
+        return np.nan
+    cagr = float((1.0 + r).prod()) ** (12.0 / n) - 1.0
+    if rf_monthly is not None:
+        rf = rf_monthly.reindex(r.index).fillna(0)
+        excess = r - rf
+        rf_annual = float((1.0 + rf).prod()) ** (12.0 / n) - 1.0
+    else:
+        excess, rf_annual = r, 0.0
+    dd = float(np.sqrt(np.mean(np.minimum(excess.values, 0.0) ** 2)) * np.sqrt(12))
+    return (cagr - rf_annual) / dd if dd > 0 else 0.0
+
+
+def _rc_f2(x):
+    return "n/a" if x is None or not np.isfinite(x) else f"{x:.2f}"
+
+
+def _rc_f1(x):
+    return "n/a" if x is None or not np.isfinite(x) else f"{x:.1f}"
+
+
+def _rc_pct(x):
+    """A fraction as a percent to one decimal, with a true minus sign."""
+    if x is None or not np.isfinite(x):
+        return "n/a"
+    mag = f"{abs(x) * 100:.1f}"
+    return ("\u2212" if x < 0 and float(mag) != 0 else "") + mag + "%"
+
+
+def _rc_signed(x, digits=2, scale=1.0, unit=""):
+    if x is None or not np.isfinite(x):
+        return "n/a"
+    mag = f"{abs(x * scale):.{digits}f}"
+    return ("+" if (x >= 0 or float(mag) == 0) else "\u2212") + mag + unit
+
+
+def rc_pill(tone, glyph, text):
+    return {"tone": tone, "glyph": glyph, "text": text}
+
+
+def rc_verdict(v, nb, mild=RC_MILD, spike=RC_SPIKE):
+    """A setting against its neighbors' average: (level, pill)."""
+    if not (np.isfinite(v) and np.isfinite(nb)) or nb == 0:
+        return "na", rc_pill("neutral", "neutral", "Not enough runs")
+    rel = (v - nb) / abs(nb)
+    if rel > spike:
+        return "bad", rc_pill("bad", "bad", "Spike")
+    if rel > mild:
+        return "warn", rc_pill("warn", "warn", "Mild peak")
+    if rel < -mild:
+        return "dip", rc_pill("neutral", "down", "Dip")
+    return "good", rc_pill("good", "good", "Robust")
+
+
+def _rc_level_rel(t, n, mild, spike):
+    if not (np.isfinite(t) and np.isfinite(n)) or n == 0:
+        return "na"
+    r = (t - n) / abs(n)
+    return "bad" if r > spike else ("warn" if r > mild else ("dip" if r < -mild else "good"))
+
+
+def _rc_level_pts(d, hi, lo):
+    if not np.isfinite(d):
+        return "na"
+    return "bad" if d > hi else ("warn" if d > lo else ("dip" if d < -lo else "good"))
+
+
+def _rc_gap_pill(d, lvl, digits=2, scale=1.0, unit=""):
+    if lvl == "na":
+        return rc_pill("neutral", "neutral", "Not enough runs")
+    if lvl == "bad":
+        return rc_pill("bad", "bad", "Flattered: " + _rc_signed(d, digits, scale, unit))
+    if lvl == "warn":
+        return rc_pill("warn", "warn", "Somewhat flattered: " + _rc_signed(d, digits, scale, unit))
+    if lvl == "dip":
+        return rc_pill("good", "up", "Neighbors do better: " + _rc_signed(-d, digits, scale, unit))
+    return rc_pill("good", "good", "Holds up: " + _rc_signed(d, digits, scale, unit))
+
+
+def rc_sizing_name(s, with_note=False):
+    name = RC_SIZING_NAMES.get(s, str(s))
+    if with_note and s in RC_SIZING_NOTES:
+        return f"{name} ({RC_SIZING_NOTES[s]})"
+    return name
+
+
+def rc_analyze(params, plan, runs, tested, rf_monthly=None, mild=RC_MILD, spike=RC_SPIKE):
+    """Everything the panel shows, from the finished runs.
+
+    tested = (Sortino, CAGR, worst daily drawdown) of the main run, as the
+    Performance Summary shows them.
+    """
+    k0 = rc_current_offset(params)
+    cur_lb = tuple(int(x) for x in params["main_lookbacks"])
+    pair = rc_lb_name(cur_lb)
+    tS, tC, tD = [float(x) if x is not None else np.nan for x in tested]
+
+    def val(spec, f="S"):
+        e = runs.get(spec)
+        return float(e[f]) if e is not None and np.isfinite(e[f]) else np.nan
+
+    def finite(xs):
+        return [x for x in xs if np.isfinite(x)]
+
+    def avg(xs):
+        xs = finite(xs)
+        return float(np.mean(xs)) if xs else np.nan
+
+    def med(xs):
+        xs = finite(xs)
+        return float(np.median(xs)) if xs else np.nan
+
+    block = plan["block"]
+    wide_have = [s for s in plan["wide"] if s in runs and np.isfinite(runs[s]["S"])]
+    has_wide = len(plan["wide"]) > 0 and len(wide_have) >= 0.8 * len(plan["wide"])
+    nS, nC, nD = (avg([val(s, f) for s in block]) for f in ("S", "C", "D"))
+    mS, mC, mD = ((med([val(s, f) for s in wide_have]) if has_wide else np.nan) for f in ("S", "C", "D"))
+    lvS = _rc_level_rel(tS, nS, mild, spike)
+
+    def span(a, b, fmt, first_max=False):
+        if not np.isfinite(a):
+            return "n/a"
+        if not np.isfinite(b):
+            return "about " + fmt(a)
+        lo, hi = (max(a, b), min(a, b)) if first_max else (min(a, b), max(a, b))
+        return fmt(lo) + " to " + fmt(hi)
+
+    def note(a, b, fmt):
+        s = "Neighbors' average " + fmt(a)
+        return s + (" \u00b7 typical nearby run " + fmt(b) if np.isfinite(b) else " \u00b7 typical nearby run: Full check")
+
+    tiles = [
+        {"name": "Sortino", "tested": _rc_f2(tS), "range": span(nS, mS, _rc_f1),
+         "pill": _rc_gap_pill(tS - nS, lvS), "note": note(nS, mS, _rc_f2)},
+        {"name": "Return a year", "tested": _rc_pct(tC), "range": span(nC, mC, _rc_pct),
+         "pill": _rc_gap_pill(tC - nC, _rc_level_pts(tC - nC, 0.015, 0.005), 1, 100.0, " pts"),
+         "note": note(nC, mC, _rc_pct)},
+        {"name": "Worst drawdown", "tested": _rc_pct(tD), "range": span(nD, mD, _rc_pct, first_max=True),
+         "pill": _rc_gap_pill(tD - nD, _rc_level_pts(tD - nD, 0.03, 0.01), 1, 100.0, " pts"),
+         "note": note(nD, mD, _rc_pct)},
+    ]
+    plan_around = span(nS, mS, _rc_f1) if has_wide else _rc_f1(nS)
+    n_near = max(0, len(finite([val(s) for s in block])) - 1)
+    near_line = (f"Its {n_near} nearest neighbors average {_rc_f2(nS)} (the lookback a month either way, "
+                 f"the month-end trade a day earlier or later).")
+    if lvS in ("bad", "warn"):
+        summary = f"As tested, Sortino is {_rc_f2(tS)}. {near_line} Plan around {plan_around}."
+    elif lvS == "dip":
+        summary = f"As tested, Sortino is {_rc_f2(tS)}. {near_line} There is likely a steadier choice nearby."
+    elif lvS == "good":
+        summary = f"As tested, Sortino is {_rc_f2(tS)}. {near_line} This result holds up when the settings move."
+    else:
+        summary = f"As tested, Sortino is {_rc_f2(tS)}. The neighbor runs did not finish, so there is no comparison."
+
+    # across time
+    center_r = runs[plan["center"]]["r"]
+    n_months = len(center_r)
+    wins = [("Full period", None)] + [(f"Last {y} years", y * 12) for y in (20, 10, 5) if n_months > y * 12]
+    time_rows = []
+    for label, months in wins:
+        def ws(spec):
+            e = runs.get(spec)
+            if e is None or len(e["r"]) == 0:
+                return np.nan
+            return rc_sortino(e["r"] if months is None else e["r"].iloc[-months:], rf_monthly)
+        t = tS if months is None else ws(plan["center"])
+        n = avg([ws(s) for s in block])
+        m = med([ws(s) for s in wide_have]) if has_wide else np.nan
+        time_rows.append({"label": label, "tested": _rc_f2(t), "near": _rc_f2(n),
+                          "typical": _rc_f2(m) if has_wide else "Full check",
+                          "pill": _rc_gap_pill(t - n, _rc_level_rel(t, n, mild, spike))})
+
+    levels = []
+
+    # trade timing
+    strip_days = rc_strip_days(k0)
+    day_vals = [val(s) for s in plan["strip"]]
+    i = strip_days.index(k0) if k0 in strip_days else None
+    timing = None
+    if i is not None and len(finite(day_vals)) >= 2:
+        day_vals[i] = tS if np.isfinite(tS) else day_vals[i]
+        adj = [j for j in (i - 1, i + 1) if 0 <= j < len(day_vals) and np.isfinite(day_vals[j])]
+        nbT = avg([day_vals[j] for j in adj])
+        lvT, pillT = rc_verdict(tS, nbT, mild, spike)
+        levels.append(lvT)
+
+        def sm(j):
+            return avg([day_vals[q] for q in (j - 1, j, j + 1) if 0 <= q < len(day_vals)])
+
+        inner = [j for j in range(1, len(day_vals) - 1)
+                 if all(np.isfinite(day_vals[q]) for q in (j - 1, j, j + 1))]
+        best_j = max(inner, key=sm) if inner else i
+        cur_sm, best_sm = sm(i), sm(best_j)
+        better = best_j != i and np.isfinite(cur_sm) and cur_sm != 0 and (best_sm - cur_sm) / abs(cur_sm) >= mild
+        many = len(adj) > 1
+        name = rc_cap(rc_trade_phrase(k0))
+        if lvT in ("bad", "warn"):
+            text = (f"{name} scores {_rc_f2(tS)}. The {'days beside it average' if many else 'day beside it scores'} "
+                    f"{_rc_f2(nbT)}, so about {_rc_f2(tS - nbT)} of the score comes from the exact day.")
+        elif lvT == "dip":
+            text = (f"{name} scores {_rc_f2(tS)}, below the {'days' if many else 'day'} beside it ({_rc_f2(nbT)}). "
+                    f"A day either way would have done better.")
+        else:
+            text = (f"{name} scores {_rc_f2(tS)}, in line with the {'days' if many else 'day'} beside it "
+                    f"({_rc_f2(nbT)}). A day either way changes little.")
+        if better:
+            suggest = (f"Steadier option: {rc_trade_phrase(strip_days[best_j])}. Its three-day stretch averages "
+                       f"{_rc_f2(best_sm)}, against {_rc_f2(cur_sm)} here.")
+            suggest_pill = rc_pill("good", "up", _rc_signed(best_sm - cur_sm))
+        else:
+            suggest = (f"No steadier day nearby. This three-day stretch already averages the highest, at {_rc_f2(cur_sm)}."
+                       if best_j == i else
+                       f"No steadier day nearby. This stretch of days averages {_rc_f2(cur_sm)}, and the best "
+                       f"nearby stretch averages {_rc_f2(best_sm)}.")
+            suggest_pill = rc_pill("neutral", "neutral", "No change suggested")
+        vmax = max(finite(day_vals + [0.0])) or 1.0
+        days = []
+        for j, kk in enumerate(strip_days):
+            e = runs.get(plan["strip"][j])
+            v = day_vals[j]
+            tip = rc_cap(rc_trade_phrase(kk)) + ": " + ("no result" if not np.isfinite(v) else (
+                f"Sortino {_rc_f2(v)}" + (f" \u00b7 return {_rc_pct(e['C'])} a year \u00b7 worst drawdown {_rc_pct(e['D'])}"
+                                          if e is not None else "")))
+            days.append({"name": rc_trade_short(kk), "v": v, "label": _rc_f2(v) if (j == i or j in adj) else "",
+                         "h": int(max(4, round(max(v, 0.0) / vmax * 118))) if np.isfinite(v) else 0,
+                         "cur": j == i, "tip": tip})
+        timing = {"pill": pillT, "text": text, "suggest": suggest, "suggest_pill": suggest_pill, "days": days,
+                  "ref": int(min(144, round(max(mS, 0.0) / vmax * 118))) if has_wide and np.isfinite(mS) else None,
+                  "typical": _rc_f2(mS) if has_wide else None, "pair": pair}
+
+    # main lookback
+    lookback = None
+    cells = [s[0] for s in plan["cells"]]
+    cell_vals = {c: val(s) for c, s in zip(cells, plan["cells"])}
+    cell_vals[cur_lb] = tS if np.isfinite(tS) else cell_vals.get(cur_lb, np.nan)
+    others = finite([v for c, v in cell_vals.items() if c != cur_lb])
+    if others:
+        nbL = avg(others)
+        lvL, pillL = rc_verdict(tS, nbL, mild, spike)
+        levels.append(lvL)
+        allv = finite(list(cell_vals.values()))
+        rank = 1 + sum(1 for v in allv if v > tS)
+        tail = f" It ranks {rank} of {len(allv)} on this trade day."
+        nb_words = f"{len(others)} lookback{'s' if len(others) != 1 else ''} beside it"
+        if lvL in ("bad", "warn"):
+            text = (f"{pair} scores {_rc_f2(tS)}. The {nb_words} average {_rc_f2(nbL)}, so about "
+                    f"{_rc_f2(tS - nbL)} of the score comes from this exact lookback.{tail}")
+        elif lvL == "dip":
+            text = f"{pair} scores {_rc_f2(tS)}, below the {nb_words} ({_rc_f2(nbL)}).{tail}"
+        else:
+            text = f"{pair} scores {_rc_f2(tS)}, in line with the {nb_words} ({_rc_f2(nbL)}).{tail}"
+        cmin, cmax = min(allv), max(allv)
+        if len(cur_lb) == 2:
+            row_keys = sorted({c[0] for c in cells})
+            col_keys = sorted({c[1] for c in cells})
+            get = lambda a, b: (a, b)
+        else:
+            row_keys, col_keys = [None], sorted({c[0] for c in cells})
+            get = lambda a, b: (b,)
+        rows = []
+        for a in row_keys:
+            row = []
+            for b in col_keys:
+                c = get(a, b)
+                v = cell_vals.get(c, np.nan)
+                if c not in cell_vals or not np.isfinite(v):
+                    row.append(None)
+                    continue
+                e = runs.get(plan["cells"][cells.index(c)])
+                t = (v - cmin) / ((cmax - cmin) or 1.0)
+                mix = lambda c0, c1: int(round(c0 + (c1 - c0) * t))
+                row.append({"v": _rc_f2(v), "bg": f"rgb({mix(243, 185)},{mix(240, 168)},{mix(251, 232)})",
+                            "cur": c == cur_lb,
+                            "tip": f"{rc_lb_name(c)} months: Sortino {_rc_f2(v)}"
+                                   + (f" \u00b7 return {_rc_pct(e['C'])} a year \u00b7 worst drawdown {_rc_pct(e['D'])}"
+                                      if e is not None else "")})
+            rows.append({"head": (f"{a} month{'s' if a != 1 else ''}" if a is not None else "Lookback"), "cells": row})
+        lookback = {"pill": pillL, "text": text, "rows": rows,
+                    "cols": [f"{b} month{'s' if b != 1 else ''}" for b in col_keys],
+                    "two": len(cur_lb) == 2, "day": rc_trade_phrase(k0)}
+
+    def bar_rows(items, cur_key):
+        vmax = max(finite([v for _k, _n, _s, v in items] + [0.0])) or 1.0
+        return [{"name": n, "sub": s, "v": _rc_f2(v), "w": int(round(max(v, 0.0) / vmax * 100)) if np.isfinite(v) else 0,
+                 "cur": k == cur_key} for k, n, s, v in items]
+
+    axes = []
+
+    # position sizing
+    sizing0 = params.get("sizing", SIZING_IF_UNSET)
+    for other, specs in plan["sizing"].items():
+        pairs = [(cell_vals.get(c, np.nan), val(s)) for c, s in zip(cells, specs)]
+        pairs = [(a, b) for a, b in pairs if np.isfinite(a) and np.isfinite(b)]
+        if not pairs:
+            continue
+        a_avg, b_avg = avg([a for a, _b in pairs]), avg([b for _a, b in pairs])
+        wins_n, n = sum(1 for a, b in pairs if a > b), len(pairs)
+        cur_name, other_name = rc_sizing_name(sizing0), rc_sizing_name(other)
+        other_note = (", " + RC_SIZING_NOTES[other].replace("2026, previously", "2026 and previously")
+                      if other in RC_SIZING_NOTES else "")
+        cur_note = (" (" + RC_SIZING_NOTES[sizing0] + ")" if sizing0 in RC_SIZING_NOTES else "")
+        where = f"the {n} nearby lookback{'s' if n != 1 else ''}"
+        text = (f"{cur_name}{cur_note} averages {_rc_f2(a_avg)} across {where}, against {_rc_f2(b_avg)} for "
+                f"{other_name[0].lower() + other_name[1:]}{other_note}. It is ahead in {wins_n} of {n}.")
+        if a_avg >= b_avg and wins_n * 3 >= n * 2:
+            lv, pill = "good", rc_pill("good", "good", "Robust")
+        elif b_avg > a_avg * (1 + mild) and wins_n * 3 <= n:
+            lv, pill = "dip", rc_pill("neutral", "down", "Dip")
+            text += f" Steadier option: {other_name[0].lower() + other_name[1:]} ({_rc_signed(b_avg - a_avg)})."
+        else:
+            lv, pill = "warn", rc_pill("warn", "warn", "Close call")
+        levels.append(lv)
+        axes.append({"title": "Position sizing", "pill": pill, "text": text,
+                     "caption": f"Average Sortino across {where}, by sizing method.",
+                     "bars": bar_rows([(sizing0, cur_name, RC_SIZING_NOTES.get(sizing0, ""), a_avg),
+                                       (other, other_name, RC_SIZING_NOTES.get(other, ""), b_avg)], sizing0)})
+
+    # volatility window
+    v0 = int(params["vol_months"])
+    vol_vals = {v0: avg([cell_vals.get(c, np.nan) for c in cells])}
+    for v, specs in plan["vol"].items():
+        vol_vals[v] = avg([val(s) for s in specs])
+    keys = sorted(k for k, x in vol_vals.items() if np.isfinite(x))
+    if v0 in keys and len(keys) >= 2:
+        j = keys.index(v0)
+        nbV = avg([vol_vals[keys[q]] for q in (j - 1, j + 1) if 0 <= q < len(keys)])
+        lvV, pillV = rc_verdict(vol_vals[v0], nbV, mild, spike)
+        levels.append(lvV)
+        rest = ", ".join(f"{k} months {_rc_f2(vol_vals[k])}" for k in keys if k != v0)
+        text = (f"{v0} months averages {_rc_f2(vol_vals[v0])} across the nearby lookbacks. "
+                f"Other windows: {rest}.")
+        axes.append({"title": "Volatility window", "pill": pillV, "text": text,
+                     "caption": "Average Sortino across the nearby lookbacks, by window length.",
+                     "bars": bar_rows([(k, f"{k} months", "", vol_vals[k]) for k in keys], v0)})
+
+    # holdings count
+    n0 = int(params["final_top_n"])
+    top_vals = {n0: tS}
+    for n, s in plan["topn"].items():
+        top_vals[n] = val(s)
+    keys = sorted(k for k, x in top_vals.items() if np.isfinite(x))
+    if n0 in keys and len(keys) >= 2:
+        nbN = avg([top_vals[k] for k in keys if k != n0])
+        lvN, pillN = rc_verdict(tS, nbN, mild, spike)
+        levels.append(lvN)
+        rest = " and ".join(f"{k} funds scores {_rc_f2(top_vals[k])}" for k in keys if k != n0)
+        text = (f"{n0} funds scores {_rc_f2(tS)}. {rest[0].upper() + rest[1:]}. One fund more or fewer is a "
+                f"bigger step than a month of lookback, so read this one loosely.")
+        axes.append({"title": "Holdings count", "pill": pillN, "text": text,
+                     "caption": "Sortino at this lookback and trade day, by number of funds held.",
+                     "bars": bar_rows([(k, f"{k} funds", "", top_vals[k]) for k in keys], n0)})
+
+    # equity lookback
+    eq0 = tuple(int(x) for x in params.get("equity_lookbacks", []))
+    eq_vals = {c: val(s) for c, s in plan["eq"].items()}
+    eq_keys = sorted(c for c, x in eq_vals.items() if np.isfinite(x))
+    if eq_keys:
+        nbE = avg([eq_vals[c] for c in eq_keys])
+        lvE, pillE = rc_verdict(tS, nbE, mild, spike)
+        levels.append(lvE)
+        rest = ", ".join(f"{rc_lb_name(c)} {_rc_f2(eq_vals[c])}" for c in eq_keys)
+        text = (f"The {rc_lb_name(eq0)} month equity lookback scores {_rc_f2(tS)}. "
+                f"One month away on either leg: {rest}.")
+        items = [(eq0, f"{rc_lb_name(eq0)} months", "", tS)] + [(c, f"{rc_lb_name(c)} months", "", eq_vals[c]) for c in eq_keys]
+        axes.append({"title": "Equity lookback", "pill": pillE, "text": text,
+                     "caption": "Sortino at this lookback and trade day, by equity lookback.",
+                     "bars": bar_rows(sorted(items, key=lambda it: it[0]), eq0)})
+
+    def count(x):
+        return sum(1 for y in levels if y == x)
+
+    chips = []
+    if count("bad"):
+        chips.append(rc_pill("bad", "bad", f"{count('bad')} spike{'s' if count('bad') > 1 else ''}"))
+    if count("warn"):
+        chips.append(rc_pill("warn", "warn", f"{count('warn')} to watch"))
+    if count("dip"):
+        chips.append(rc_pill("neutral", "down", f"{count('dip')} dip{'s' if count('dip') > 1 else ''}"))
+    if count("good"):
+        chips.append(rc_pill("good", "good", f"{count('good')} robust"))
+
+    return {"summary": summary, "chips": chips, "tiles": tiles, "time_rows": time_rows, "timing": timing,
+            "lookback": lookback, "axes": axes, "has_wide": has_wide, "wide_n": len(wide_have),
+            "block_n": len(finite([val(s) for s in block])), "tested_S": tS, "near_S": nS,
+            "mild": mild, "spike": spike}
+
+
+def rc_settings_line(params):
+    """The settings the panel varies, as the run has them (for the header and the last-run comparison)."""
+    return {
+        "Lookback": rc_lb_name(params["main_lookbacks"]) + " months",
+        "Trade day": rc_trade_noun(rc_current_offset(params)),
+        "Sizing": rc_sizing_name(params.get("sizing", SIZING_IF_UNSET)).lower(),
+        "Volatility window": f"{int(params['vol_months'])} months",
+        "Holdings": f"{int(params['final_top_n'])} funds",
+        "Equity lookback": rc_lb_name(params.get("equity_lookbacks", [])) + " months",
+    }
+
+
+def rc_compare(prev, now):
+    """This run against the last one in the session, or None for the first."""
+    if not prev:
+        return None
+    if prev["context"] != now["context"]:
+        return {"changed": "Basket, period, costs or prices changed",
+                "text": "A different basket, period or cost is a different set of backtests, so the two runs are not compared.",
+                "comparable": False}
+    parts = [f"{k} {prev['settings'][k]} \u2192 {v}" for k, v in now["settings"].items()
+             if k in prev["settings"] and prev["settings"][k] != v]
+    if not parts:
+        return None
+    dT, dN = now["tested"] - prev["tested"], now["near"] - prev["near"]
+
+    def delta(d):
+        if not np.isfinite(d) or abs(d) < 0.05:
+            return rc_pill("neutral", "neutral", _rc_signed(d))
+        return rc_pill("good", "up", _rc_signed(d)) if d > 0 else rc_pill("bad", "down", _rc_signed(d))
+
+    if not (np.isfinite(dT) and np.isfinite(dN)):
+        text = "One of the two runs has no neighbor average, so there is no comparison."
+    elif abs(dT) < 0.05:
+        text = "As tested, the result barely moved."
+    elif abs(dN) < 0.4 * abs(dT):
+        text = (f"Most of the {_rc_f2(abs(dT))} {'gain' if dT > 0 else 'drop'} is the luck of the exact setting. "
+                f"The neighborhood moved only {_rc_f2(abs(dN))}.")
+    else:
+        text = (f"The neighborhood moved too ({_rc_signed(dN)}), so this looks like a real difference "
+                f"and not only the exact setting.")
+    return {"changed": " \u00b7 ".join(parts), "comparable": True, "text": text,
+            "tested": f"{_rc_f2(prev['tested'])} \u2192 {_rc_f2(now['tested'])}", "tested_pill": delta(dT),
+            "near": f"{_rc_f2(prev['near'])} \u2192 {_rc_f2(now['near'])}", "near_pill": delta(dN)}
+
+
+# ---- a second basket (added November 17, 2026) ------------------------------
+# Opt-in, in the sidebar's Reality Check section. The same lookbacks and trade
+# days run on "Basket B", the run's basket with funds left out and/or added, and
+# the panel shows how many of the paired runs each basket wins. A quick screen,
+# not the 90% odds test: it counts runs and averages Sortino, and says nothing
+# about how likely a gap is to be luck.
+
+RC_CMP_WIN_SHARE = (3, 4)   # a basket must win at least 3 of every 4 paired runs ...
+RC_CMP_FLOOR = 0.5          # ... and average RC_MILD higher than the other (its average, at least this)
+RC_CMP_TIE = 0.005          # a Sortino gap smaller than this is a tie
+
+
+def rc_make_basket_b(fixed, equity, equity_top_n, leave_out=(), add=(), add_to="fixed"):
+    """Basket B: the run's fixed basket and equity list with funds left out, then funds added.
+
+    add_to is "fixed" or "equity"; a fund added to one list leaves the other. The equity count is lowered to
+    the equity funds left, since run_backtest picks no equity at all when fewer are eligible than it is asked
+    for. Returns a dict: fixed, equity, equity_top_n, left_out, added, add_to, capped (the run's count, when it
+    was lowered, else None) and same (True when Basket B trades the run's own funds).
+    """
+    out = list(dict.fromkeys(leave_out))
+    fixed_b = [t for t in fixed if t not in out]
+    equity_b = [t for t in equity if t not in out]
+    added = list(dict.fromkeys(t for t in add if t))
+    for t in added:
+        mine, other = (equity_b, fixed_b) if add_to == "equity" else (fixed_b, equity_b)
+        if t in other:
+            other.remove(t)
+        if t not in mine:
+            mine.append(t)
+    n0 = int(equity_top_n)
+    top_b = min(n0, len(equity_b))
+    same = set(fixed_b) == set(fixed) and (n0 == 0 or (set(equity_b) == set(equity) and top_b == n0))
+    return {"fixed": fixed_b, "equity": equity_b, "equity_top_n": top_b, "left_out": out, "added": added,
+            "add_to": add_to, "capped": n0 if (n0 > 0 and top_b < n0) else None, "same": same}
+
+
+def rc_basket_b_funds(b):
+    """The funds Basket B can trade: its fixed basket, and its equity list while equity picks are on."""
+    return list(b["fixed"]) + (list(b["equity"]) if b["equity_top_n"] > 0 else [])
+
+
+def rc_basket_b_text(b):
+    """Basket B in words: "your basket without HGER, plus VNQ in the fixed basket"."""
+    parts = []
+    if b["left_out"]:
+        parts.append("without " + ", ".join(b["left_out"]))
+    if b["added"]:
+        parts.append("plus " + ", ".join(b["added"])
+                     + (" in the equity list" if b["add_to"] == "equity" else " in the fixed basket"))
+    return "your basket" + ((" " + ", ".join(parts)) if parts else "")
+
+
+def rc_basket_b_params(params, b):
+    """The run's params with Basket B's funds in place; costs, leverage, G1 and the rest are the run's own."""
+    p = dict(params)
+    p.update(fixed_tickers=list(b["fixed"]), equity_tickers=list(b["equity"]), equity_top_n=int(b["equity_top_n"]))
+    return p
+
+
+def rc_basket_b_issues(daily_prices, params, b):
+    """Basket B's funds that the run's basket does not already cover and that lack the history the run needs,
+    as (fund, sentence) pairs. The cutoff is the main run's data check: the start month less the longest
+    lookback and one more month. A fund that may join late (JOIN_WHEN_AVAILABLE) is allowed in the fixed basket."""
+    try:
+        y, m = (int(x) for x in str(params["backtest_start"]).split("-")[:2])
+        longest = max(int(x) for x in params["main_lookbacks"])
+        required_by = pd.Timestamp(year=y, month=m, day=1) - pd.DateOffset(months=longest + 1)
+    except (ValueError, TypeError, KeyError):
+        required_by = pd.Timestamp("2012-01-01")
+    covered = set(params.get("fixed_tickers", []))
+    if int(params.get("equity_top_n", 0)) > 0:
+        covered |= set(params.get("equity_tickers", []))
+    issues = []
+    for t in rc_basket_b_funds(b):
+        if t in covered:
+            continue
+        first = daily_prices[t].dropna().index.min() if t in daily_prices.columns else None
+        if first is None or pd.isna(first):
+            issues.append((t, f"{t} has no prices in the data."))
+        elif first > required_by and not (t in JOIN_WHEN_AVAILABLE and t in b["fixed"]):
+            issues.append((t, f"{t} has prices only from {first:%B %d, %Y}, and this run needs them by "
+                              f"{required_by:%B %Y}."))
+    return issues
+
+
+def rc_basket_b_calendar_clashes(daily_prices, extra):
+    """Basket B's own funds (extra) that would change the run's trading calendar if they sat in the price table.
+
+    A fund that printed a close on a weekday none of the run's funds traded (a fund on another country's
+    exchange, say) adds that day, and the main run's trade days would move with it. Returns those funds; the
+    list is empty in the usual case, a US-listed fund.
+    """
+    extra = [c for c in dict.fromkeys(extra) if c in daily_prices.columns]
+    if not extra:
+        return []
+    rest = daily_prices.drop(columns=extra)
+    if rest.shape[1] == 0:
+        return []
+    base = market_trading_dates(rest)
+    return [c for c in extra if not market_trading_dates(rest.join(daily_prices[[c]])).equals(base)]
+
+
+def rc_compute_other(daily_prices, monthly_prices, params_b, specs, rf_monthly, cache=None, progress=None,
+                     parallel=True):
+    """Run (or reuse) the specs on another basket (params_b), as rc_compute does for the run's own.
+
+    Returns (runs, stats): runs maps a spec to its entry; stats counts the runs needed, reused and run now.
+    Basket B's saved runs sit in the same cache, under a key that holds its own funds, so the run's own saved
+    runs are untouched and a Basket B backtest that has run once is not run again.
+    """
+    t0 = _rc_time.time()
+    base = rc_base_key(params_b, rc_fingerprint(daily_prices, params_b, rc_price_cut(daily_prices, params_b)))
+    specs = list(dict.fromkeys(specs))
+    runs, todo = {}, []
+    for spec in specs:
+        key = rc_key(base, spec)
+        if cache is not None and key in cache:
+            runs[spec] = cache[key]
+        else:
+            todo.append((spec, key))
+    pending, used_workers = list(todo), 1
+    workers = min(rc_pool_workers(), len(pending)) if parallel else 1
+    if workers >= 2 and len(pending) >= RC_POOL_MIN:
+        try:
+            got = rc_run_parallel(
+                daily_prices, monthly_prices, rf_monthly,
+                [(key, rc_spec_params(params_b, spec)) for spec, key in pending], workers,
+                (lambda n: progress(n, len(todo))) if progress is not None else None,
+            )
+            used_workers = workers
+        except Exception:
+            got = {}
+        for spec, key in pending:
+            if key in got:
+                runs[spec] = got[key]
+                if cache is not None:
+                    cache[key] = got[key]
+        pending = [(spec, key) for spec, key in pending if key not in got]
+    n_before = len(todo) - len(pending)
+    for i, (spec, key) in enumerate(pending):
+        if progress is not None:
+            progress(n_before + i, len(todo))
+        try:
+            res, _trades, deq = run_backtest(daily_prices, monthly_prices, rc_spec_params(params_b, spec))
+            runs[spec] = rc_entry(res, deq, rf_monthly)
+        except Exception:
+            runs[spec] = rc_entry(None, None, rf_monthly)
+        if cache is not None:
+            cache[key] = runs[spec]
+    stats = {"need": len(specs), "fresh": len(todo), "reused": len(specs) - len(todo),
+             "secs": _rc_time.time() - t0, "base": base, "workers": used_workers}
+    return runs, stats
+
+
+def rc_compare_baskets(specs, runs_a, runs_b, mild=RC_MILD):
+    """Basket B against the run's basket over the runs both finished: the wins each way, the average Sortino
+    of each, and a verdict ("b", "a" or "close"). None when no run finished on both.
+
+    A basket is ahead only when it wins at least 3 of every 4 paired runs and its average Sortino is at least
+    `mild` higher than the other's (the other's average, but at least RC_CMP_FLOOR, so a near-zero average
+    does not make a tiny gap look large).
+    """
+    pairs = []
+    for s in specs:
+        ea, eb = runs_a.get(s), runs_b.get(s)
+        if ea is None or eb is None:
+            continue
+        if np.isfinite(ea["S"]) and np.isfinite(eb["S"]):
+            pairs.append((float(ea["S"]), float(eb["S"])))
+    n = len(pairs)
+    if n == 0:
+        return None
+    a_avg = float(np.mean([a for a, _b in pairs]))
+    b_avg = float(np.mean([b for _a, b in pairs]))
+    a_wins = sum(1 for a, b in pairs if a - b > RC_CMP_TIE)
+    b_wins = sum(1 for a, b in pairs if b - a > RC_CMP_TIE)
+    num, den = RC_CMP_WIN_SHARE
+    gap = b_avg - a_avg
+    b_ahead = b_wins * den >= n * num and gap >= mild * max(abs(a_avg), RC_CMP_FLOOR)
+    a_ahead = a_wins * den >= n * num and -gap >= mild * max(abs(b_avg), RC_CMP_FLOOR)
+    return {"n": n, "a_avg": a_avg, "b_avg": b_avg, "gap": gap, "a_wins": a_wins, "b_wins": b_wins,
+            "ties": n - a_wins - b_wins, "verdict": "b" if b_ahead else ("a" if a_ahead else "close")}
+
+
+def rc_basket_card(daily_prices, monthly_prices, params, plan, runs_a, rf_monthly, mode, cache, b,
+                   progress=None, mild=RC_MILD, parallel=True):
+    """The Basket comparison card (an axis card's keys), its chip for the Testing bar, and Basket B's run counts.
+
+    Basket B runs the specs the run's own check reads for the lookback cells and trade days around the run's
+    (the Quick check's runs, or the Full check's), through the same saved-run cache and worker pool. When it
+    cannot run (the same funds as the run's, no funds, a fund without enough history, or a fund the price
+    download could not supply) the card is a note that says why, and the counts are None.
+    """
+    desc = rc_basket_b_text(b)
+    chip = f"Compared with Basket B: {desc}"
+
+    def note(tone, pill_text, text, stats=None):
+        card = {"title": "Basket comparison", "pill": rc_pill(tone, tone if tone != "bad" else "bad", pill_text),
+                "text": text, "caption": "", "bars": []}
+        return card, chip, stats
+
+    if b.get("error"):
+        return note("warn", "Not run", "Basket B was not run. " + str(b["error"]))
+    if b["same"]:
+        return note("neutral", "Same basket",
+                    "Basket B has the same funds as your basket, so there is nothing to compare. Leave a fund "
+                    "out or add one in the sidebar, under Reality Check.")
+    if not rc_basket_b_funds(b):
+        return note("warn", "Not run", "Basket B was not run, because it has no funds left.")
+    issues = rc_basket_b_issues(daily_prices, params, b)
+    if issues:
+        return note("warn", "Not run",
+                    "Basket B was not run. " + " ".join(s for _t, s in issues)
+                    + " Choose a later start date or a fund with a longer history, or give the fund a "
+                      "backfill under Backfill Rules in the sidebar.")
+    specs = list(dict.fromkeys(plan["wide"] if mode == "full" else plan["block"]))
+    runs_b, stats = rc_compute_other(daily_prices, monthly_prices, rc_basket_b_params(params, b), specs,
+                                     rf_monthly, cache=cache, progress=progress, parallel=parallel)
+    cmp = rc_compare_baskets(specs, runs_a, runs_b, mild)
+    if cmp is None:
+        return note("warn", "Not run", "Basket B's backtests did not finish, so there is no comparison.", stats)
+    mp = int(round(mild * 100))
+    n, a_avg, b_avg = cmp["n"], cmp["a_avg"], cmp["b_avg"]
+    head = f"Basket B wins {cmp['b_wins']} of {n} paired runs and your basket wins {cmp['a_wins']}"
+    head += (f", with {cmp['ties']} tied." if cmp["ties"] else ".")
+    avgs = (f"Averaged over the {n} runs, Basket B scores {_rc_f2(b_avg)} and your basket {_rc_f2(a_avg)} "
+            f"({_rc_signed(cmp['gap'])} for Basket B).")
+    if cmp["verdict"] == "b":
+        pill = rc_pill("good", "up", "Basket B is better")
+        verdict = (f"Basket B is ahead on both counts: it wins at least 3 of every 4 runs and averages at "
+                   f"least {mp}% higher.")
+    elif cmp["verdict"] == "a":
+        pill = rc_pill("bad", "down", "Basket B is worse")
+        verdict = (f"Your basket is ahead on both counts: it wins at least 3 of every 4 runs and averages at "
+                   f"least {mp}% higher.")
+    else:
+        pill = rc_pill("warn", "warn", "No clear difference")
+        verdict = (f"Neither basket is ahead on both counts (winning at least 3 of every 4 runs and averaging "
+                   f"at least {mp}% higher), so treat them as close.")
+    text = f"{head} {avgs} {verdict} This is a quick screen, not the 90% odds test."
+    if b["capped"]:
+        if b["equity_top_n"] > 0:
+            text += (f" Basket B picks {b['equity_top_n']} equity fund{'s' if b['equity_top_n'] != 1 else ''} "
+                     f"instead of {b['capped']}, since that is all its equity list has left.")
+        else:
+            text += " Basket B picks no equity funds, since its equity list is empty."
+    vmax = max(a_avg, b_avg, 0.0) or 1.0
+
+    def width(v):
+        return int(round(max(v, 0.0) / vmax * 100))
+
+    card = {"title": "Basket comparison", "pill": pill, "text": text,
+            "caption": (f"Average Sortino across the {n} paired runs. Basket B used {stats['need']} backtests: "
+                        f"{stats['reused']} reused from saved results, {stats['fresh']} run just now."),
+            "bars": [{"name": "Your basket", "sub": "", "v": _rc_f2(a_avg), "w": width(a_avg), "cur": True},
+                     {"name": "Basket B", "sub": desc, "v": _rc_f2(b_avg), "w": width(b_avg), "cur": False}]}
+    return card, chip, stats
+
+
+# ---- drawing the panel ------------------------------------------------------
+
+RC_CSS = "".join([
+    "<style>",
+    ".rc-wrap{font-family:'DM Sans',sans-serif;color:#484848;font-size:14px;line-height:1.5;display:flex;flex-direction:column;gap:22px;margin:0.2rem 0 1rem 0}",
+    ".rc-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:13px;font-weight:600;white-space:nowrap}",
+    ".rc-flex{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}",
+    ".rc-bar-top{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;padding:12px 16px;background:#fafafa;border:1px solid #e6e6ee;border-radius:10px}",
+    ".rc-chip{padding:4px 10px;border-radius:6px;background:#ffffff;border:1px solid #d9d9e3;color:#2b2540;font-weight:500}",
+    ".rc-strong{font-weight:600;color:#2b2540}",
+    ".rc-muted{color:#666677}",
+    ".rc-small{font-size:13px;color:#666677}",
+    ".rc-cmp{display:flex;flex-direction:column;gap:10px;padding:16px 18px;border:1px solid #d9d2f3;background:#f7f5fb;border-radius:10px}",
+    ".rc-lead{font-size:18px;line-height:1.45;font-weight:500;color:#2b2540;max-width:880px}",
+    ".rc-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}",
+    ".rc-tile{border:1px solid #e6e6ee;border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:12px}",
+    ".rc-nums{display:flex;flex-direction:column;gap:10px}",
+    ".rc-num{display:flex;flex-direction:column;gap:2px}",
+    ".rc-big{font-size:28px;line-height:1.1;font-weight:700;color:#2b2540}",
+    ".rc-big-p{font-size:28px;line-height:1.1;font-weight:700;color:#3A0CA3}",
+    ".rc-h3{font-size:18px;font-weight:600;color:#2b2540}",
+    ".rc-h4{font-size:16px;font-weight:600;color:#2b2540}",
+    ".rc-sec{display:flex;flex-direction:column;gap:12px}",
+    ".rc-table{width:100%;border-collapse:collapse;font-size:14px;color:#484848}",
+    ".rc-table thead th{text-align:right;padding:11px 14px;border-bottom:2px solid #3A0CA3;background-color:#fafafa;font-weight:600;font-size:13px}",
+    ".rc-table thead th:first-child,.rc-table thead th:last-child{text-align:left}",
+    ".rc-table tbody td{padding:9px 14px;border-bottom:1px solid #eeeeee;text-align:right;font-variant-numeric:tabular-nums}",
+    ".rc-table tbody td:first-child{text-align:left;color:#666677;font-weight:500}",
+    ".rc-table tbody td:last-child{text-align:left}",
+    ".rc-table tbody td.rc-t{font-weight:700;color:#2b2540}",
+    ".rc-card{border:1px solid #e6e6ee;border-radius:12px;padding:20px 22px;display:flex;flex-wrap:wrap;gap:20px 36px}",
+    ".rc-left{flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:10px}",
+    ".rc-right{flex:1.4 1 420px;min-width:0;display:flex;flex-direction:column;gap:8px}",
+    ".rc-sug{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding-top:12px;border-top:1px solid #eeeeee}",
+    ".rc-bars{position:relative;display:flex;align-items:flex-end;gap:10px;height:150px;border-bottom:1px solid #c9c9d6}",
+    ".rc-col{flex:1 1 0;min-width:0;height:150px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;cursor:help}",
+    ".rc-col-l{font-size:13px;font-weight:600;color:#2b2540;min-height:18px;font-variant-numeric:tabular-nums}",
+    ".rc-col-b{display:block;width:100%;max-width:60px;border-radius:4px 4px 0 0}",
+    ".rc-axis{display:flex;gap:10px}",
+    ".rc-axis span{flex:1 1 0;min-width:0;text-align:center;font-size:13px;color:#666677}",
+    ".rc-axis span.rc-on{color:#2b2540;font-weight:700}",
+    ".rc-ref{position:absolute;left:0;right:0;border-top:2px dashed #6b6b7b;pointer-events:none}",
+    ".rc-dash{display:inline-block;width:24px;border-top:2px dashed #6b6b7b;vertical-align:middle;margin-right:8px}",
+    ".rc-grid{display:grid;gap:6px;align-items:stretch}",
+    ".rc-gh{font-size:13px;color:#666677;text-align:center}",
+    ".rc-gr{font-size:13px;color:#666677;display:flex;align-items:center}",
+    ".rc-cell{min-height:58px;border-radius:8px;border:2px solid transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#2b2540;cursor:help}",
+    ".rc-cell-v{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}",
+    ".rc-tag{font-size:11px;font-weight:700;color:#3A0CA3;text-transform:uppercase;letter-spacing:0.04em;min-height:14px}",
+    ".rc-hb{display:grid;grid-template-columns:minmax(120px,240px) minmax(0,1fr) 44px;gap:12px;align-items:center}",
+    ".rc-hb-n{color:#2b2540}",
+    ".rc-hb-s{display:block;font-size:12px;color:#666677}",
+    ".rc-hb-b{display:block;height:18px;border-radius:0 4px 4px 0}",
+    ".rc-hb-v{text-align:right;font-weight:600;color:#2b2540;font-variant-numeric:tabular-nums}",
+    "</style>",
+])
+
+
+def _rc_pill_html(p):
+    bg, fg = RC_TONES[p["tone"]]
+    return (f'<span class="rc-pill" style="background:{bg};color:{fg}"><span aria-hidden="true">'
+            f'{RC_GLYPHS[p["glyph"]]}</span><span>{_rc_html.escape(p["text"])}</span></span>')
+
+
+def rc_render_html(A, settings, stats, cmp=None):
+    """The whole panel as one HTML string (no blank lines, so Markdown leaves it alone)."""
+    esc = _rc_html.escape
+
+    def axis_label(name):
+        """A bar label on two lines: all but its last word, then its last word."""
+        head, _sp, tail = name.rpartition(" ")
+        return esc(head) + "<br>" + esc(tail) if head else esc(name)
+
+    h = [RC_CSS, '<div class="rc-wrap">']
+
+    secs = f", {stats['secs']:.0f} s" if stats["fresh"] else ""
+    runs_text = (f"{stats['need']} backtests behind this check \u00b7 {stats['reused']} reused from saved results "
+                 f"\u00b7 {stats['fresh']} run just now{secs}")
+    h.append('<div class="rc-bar-top"><span class="rc-strong">Testing</span>')
+    h.append("".join(f'<span class="rc-chip">{esc(k)} {esc(v)}</span>' for k, v in settings.items()))
+    if A.get("chip_b"):
+        h.append(f'<span class="rc-chip">{esc(A["chip_b"])}</span>')
+    h.append(f'<span class="rc-muted" style="margin-left:auto">{esc(runs_text)}</span></div>')
+
+    if cmp:
+        h.append('<div class="rc-cmp"><div class="rc-flex"><span class="rc-strong">Compared with your last run</span>'
+                 f'<span class="rc-muted">{esc(cmp["changed"])}</span></div>')
+        if cmp["comparable"]:
+            h.append('<div class="rc-flex" style="gap:12px 32px">'
+                     f'<span class="rc-flex"><span class="rc-muted">Sortino as tested</span><span class="rc-strong">{esc(cmp["tested"])}</span>{_rc_pill_html(cmp["tested_pill"])}</span>'
+                     f'<span class="rc-flex"><span class="rc-muted">Neighbors\' average</span><span class="rc-strong">{esc(cmp["near"])}</span>{_rc_pill_html(cmp["near_pill"])}</span>'
+                     '</div>')
+        h.append(f'<div style="color:#2b2540">{esc(cmp["text"])}</div></div>')
+
+    h.append(f'<div class="rc-sec"><div class="rc-lead">{esc(A["summary"])}</div>')
+    if A["chips"]:
+        h.append('<div class="rc-flex">' + "".join(_rc_pill_html(p) for p in A["chips"]) + "</div>")
+    h.append('<div class="rc-tiles">')
+    for t in A["tiles"]:
+        h.append(f'<div class="rc-tile"><span class="rc-small" style="font-weight:600">{esc(t["name"])}</span>'
+                 f'<div class="rc-nums"><div class="rc-num"><span class="rc-big">{esc(t["tested"])}</span><span class="rc-small">as tested</span></div>'
+                 f'<div class="rc-num"><span class="rc-big-p">{esc(t["range"])}</span><span class="rc-small">realistic range</span></div></div>'
+                 f'<div>{_rc_pill_html(t["pill"])}</div><span class="rc-small">{esc(t["note"])}</span></div>')
+    h.append("</div></div>")
+
+    h.append('<div class="rc-sec"><div class="rc-h3">Does it hold across time</div><table class="rc-table"><thead><tr>'
+             "<th>Sortino</th><th>As tested</th><th>Neighbors' average</th><th>Typical nearby run</th><th>Read</th>"
+             "</tr></thead><tbody>")
+    for r in A["time_rows"]:
+        h.append(f'<tr><td>{esc(r["label"])}</td><td class="rc-t">{esc(r["tested"])}</td><td>{esc(r["near"])}</td>'
+                 f'<td>{esc(r["typical"])}</td><td>{_rc_pill_html(r["pill"])}</td></tr>')
+    h.append("</tbody></table></div>")
+
+    mp, sp = int(round(A["mild"] * 100)), int(round(A["spike"] * 100))
+    legend = [(rc_pill("good", "good", "Robust"), f"within {mp}% of its neighbors"),
+              (rc_pill("warn", "warn", "Mild peak"), f"{mp} to {sp}% above them"),
+              (rc_pill("bad", "bad", "Spike"), f"more than {sp}% above them"),
+              (rc_pill("neutral", "down", "Dip"), f"more than {mp}% below them")]
+    h.append('<div class="rc-sec"><div class="rc-h3">Which settings this result leans on</div><div class="rc-flex" style="gap:8px 20px">')
+    h.append("".join(f'<span class="rc-flex rc-small">{_rc_pill_html(p)}<span>{esc(m)}</span></span>' for p, m in legend))
+    h.append("</div>")
+
+    T = A["timing"]
+    if T:
+        h.append('<div class="rc-card"><div class="rc-left">'
+                 f'<div class="rc-flex"><span class="rc-h4">Trade timing</span>{_rc_pill_html(T["pill"])}</div>'
+                 f'<div>{esc(T["text"])}</div>'
+                 f'<div class="rc-sug">{_rc_pill_html(T["suggest_pill"])}<span style="flex:1 1 220px;min-width:0">{esc(T["suggest"])}</span></div>'
+                 '</div><div class="rc-right">'
+                 f'<span class="rc-small">Sortino by trade day, at the {esc(T["pair"])} lookback. Hover a bar for its figures.</span>'
+                 '<div class="rc-bars">')
+        if T["ref"] is not None:
+            h.append(f'<div class="rc-ref" style="bottom:{T["ref"]}px"></div>')
+        for d in T["days"]:
+            fill = "#3A0CA3" if d["cur"] else "#8F7AD6"
+            h.append(f'<div class="rc-col" title="{esc(d["tip"])}"><span class="rc-col-l">{esc(d["label"])}</span>'
+                     f'<span class="rc-col-b" style="height:{d["h"]}px;background:{fill}"></span></div>')
+        h.append('</div><div class="rc-axis">'
+                 + "".join(f'<span class="{"rc-on" if d["cur"] else ""}">{axis_label(d["name"])}</span>' for d in T["days"])
+                 + "</div>")
+        if T["typical"] is not None:
+            h.append(f'<span class="rc-small"><span class="rc-dash"></span>Typical nearby run: {esc(T["typical"])}</span>')
+        h.append("</div></div>")
+
+    L = A["lookback"]
+    if L:
+        ncol = len(L["cols"])
+        tmpl = (f"84px repeat({ncol}, minmax(0, 1fr))" if L["two"] else f"repeat({ncol}, minmax(0, 1fr))")
+        h.append('<div class="rc-card"><div class="rc-left">'
+                 f'<div class="rc-flex"><span class="rc-h4">Main momentum lookback</span>{_rc_pill_html(L["pill"])}</div>'
+                 f'<div>{esc(L["text"])}</div></div><div class="rc-right">'
+                 f'<span class="rc-small">Sortino by lookback, trading on {esc(L["day"])}. Darker is higher. Hover a cell for its figures.</span>'
+                 f'<div class="rc-grid" style="grid-template-columns:{tmpl}">')
+        if L["two"]:
+            h.append('<span class="rc-gh" style="text-align:left">Short / long</span>')
+        h.append("".join(f'<span class="rc-gh">{esc(c)}</span>' for c in L["cols"]))
+        for row in L["rows"]:
+            if L["two"]:
+                h.append(f'<span class="rc-gr">{esc(row["head"])}</span>')
+            for c in row["cells"]:
+                if c is None:
+                    h.append("<span></span>")
+                    continue
+                border = "#3A0CA3" if c["cur"] else "transparent"
+                h.append(f'<div class="rc-cell" title="{esc(c["tip"])}" style="background:{c["bg"]};border-color:{border}">'
+                         f'<span class="rc-cell-v">{esc(c["v"])}</span><span class="rc-tag">{"current" if c["cur"] else ""}</span></div>')
+        h.append("</div></div></div>")
+
+    for ax in A["axes"]:
+        h.append('<div class="rc-card"><div class="rc-left">'
+                 f'<div class="rc-flex"><span class="rc-h4">{esc(ax["title"])}</span>{_rc_pill_html(ax["pill"])}</div>'
+                 f'<div>{esc(ax["text"])}</div></div><div class="rc-right" style="gap:10px">'
+                 f'<span class="rc-small">{esc(ax["caption"])}</span>')
+        for b in ax["bars"]:
+            fill = "#3A0CA3" if b["cur"] else "#8F7AD6"
+            sub = f'<span class="rc-hb-s">{esc(b["sub"])}</span>' if b["sub"] else ""
+            tag = ' <span class="rc-tag">current</span>' if b["cur"] else ""
+            h.append(f'<div class="rc-hb"><span class="rc-hb-n">{esc(b["name"])}{tag}{sub}</span>'
+                     f'<span><span class="rc-hb-b" style="width:{b["w"]}%;background:{fill}"></span></span>'
+                     f'<span class="rc-hb-v">{esc(b["v"])}</span></div>')
+        h.append("</div></div>")
+    h.append("</div></div>")
+    return "".join(h)
+
+
+def rc_show_panel(daily_prices, monthly_prices, params, results_df, daily_equity, strat_metrics, mode, extras=(),
+                  basket_b=None):
+    """Run the check and draw the Reality Check section (called from the results page)."""
+    st.subheader("Reality Check")
+    st.caption(
+        "How much of this result survives when the settings move a little. Every figure is a backtest: "
+        "the same run repeated on the settings one step away."
+    )
+    rf_monthly = monthly_prices["BIL"].pct_change() if "BIL" in monthly_prices.columns else None
+    cache = rc_cache_load()
+    bar = st.progress(0.0, text="Reality Check: looking for saved runs")
+
+    def progress(i, n):
+        bar.progress(min(1.0, i / max(n, 1)), text=f"Reality Check: {i} of {n} neighbor backtests done")
+
+    plan, runs, stats = rc_compute(daily_prices, monthly_prices, params, results_df, daily_equity,
+                                   rf_monthly, mode, cache=cache, progress=progress, extras=extras)
+    bar.empty()
+    if stats["fresh"]:
+        rc_cache_save(cache)
+
+    def metric(key):
+        v = strat_metrics.get(key, np.nan)
+        return float(v) if isinstance(v, (int, float, np.floating, np.integer)) else np.nan
+
+    tested = (metric("Sortino Ratio"), metric("CAGR"), metric("Max Drawdown (Daily)"))
+    A = rc_analyze(params, plan, runs, tested, rf_monthly)
+    if basket_b is not None:
+        # Basket B (opt-in; November 17, 2026): its card goes last, its chip into the Testing bar.
+        bar_b = st.progress(0.0, text="Reality Check: Basket B, looking for saved runs")
+
+        def progress_b(i, n):
+            bar_b.progress(min(1.0, i / max(n, 1)), text=f"Reality Check: Basket B, {i} of {n} backtests done")
+
+        try:
+            card_b, chip_b, stats_b = rc_basket_card(daily_prices, monthly_prices, params, plan, runs, rf_monthly,
+                                                     mode, cache, basket_b, progress=progress_b)
+            A["axes"].append(card_b)
+            A["chip_b"] = chip_b
+            if stats_b and stats_b["fresh"]:
+                rc_cache_save(cache)
+        except Exception as _b_exc:
+            st.warning(f"The Basket B comparison could not run: {_b_exc}")
+        finally:
+            bar_b.empty()
+    settings = rc_settings_line(params)
+    now = {"context": stats["base"], "settings": settings, "tested": A["tested_S"], "near": A["near_S"]}
+    cmp = None
+    try:
+        cmp = rc_compare(st.session_state.get("rc_last_run"), now)
+        st.session_state["rc_last_run"] = now
+    except Exception:
+        cmp = None
+    st.markdown(rc_render_html(A, settings, stats, cmp), unsafe_allow_html=True)
+    lines = [
+        "Neighbors' average: the lookbacks one month away on each leg, on this trade day and the days either "
+        f"side of it ({A['block_n']} runs). Typical nearby run: the median of the same lookbacks on 21 trade "
+        "days, from the 19th-to-last trading day of the month to the 2nd trading day of next month. "
+        "Realistic range: the span between the two."
+    ]
+    if not A["has_wide"]:
+        lines.append(
+            "The typical nearby run needs the Full check (Reality Check in the sidebar), which adds about "
+            f"{max(0, len(plan['wide']) - A['wide_n'])} backtests the first time and is saved after that."
+        )
+    lines.append(
+        "The signal is read at the close the day before the trade, and each lookback runs from earlier "
+        "month-end closes to that close."
+    )
+    st.caption(" ".join(lines))
+    return A, stats
+
+
+# =============================================================================
 # SIDEBAR CONTROLS
 # =============================================================================
 
@@ -3432,25 +4929,36 @@ final_top_n = st.sidebar.radio(
     horizontal=True,
 )
 
-EXEC_TIMING_OPTIONS = {
-    "Last trading day of month (at close)": "last_day",
-    "First trading day of next month (at close)": "first_day",
-}
+# Any of the 21 trade days the Reality Check's Full check charts (rc_exec_label
+# names each), earliest first (November 17, 2026). The value is the signal day k
+# that run_backtest's params["signal_offset"] reads: 1 is the last trading day,
+# 0 the first trading day of next month. Those two keep their original labels
+# and run through the original "last_day" and "first_day" paths with no
+# signal_offset in the params, so their results and saved runs are what they
+# were. Any other day sets exec_timing "offset" and params["signal_offset"].
+EXEC_TIMING_OPTIONS = {rc_exec_label(_k): _k for _k in RC_WIDE_DAYS}
 exec_timing_label = st.sidebar.selectbox(
     "Trade execution timing",
     options=list(EXEC_TIMING_OPTIONS.keys()),
-    index=0,
+    index=list(EXEC_TIMING_OPTIONS.values()).index(1),
     help=(
-        "Last trading day: allocations are computed from the close of the "
-        "trading day BEFORE the last trading day of the month, and trades "
-        "execute at the last trading day's close. Matches real-world "
-        "execution (signal from the penultimate close, enter near the "
-        "final close) with no look-ahead. "
-        "First trading day: signals use the month-end close and trades "
-        "execute at the next trading day's close (1-day lag)."
+        "The day the month-end trade is made, at that day's close. The "
+        "allocation is computed from the close of the trading day before "
+        "the trade, with each lookback running from earlier month-end "
+        "closes to that close, so there is no look-ahead. "
+        "Last trading day of month: the default, and the one that matches "
+        "real-world execution (allocation from the penultimate close, trade "
+        "near the final close). "
+        "First trading day of next month: the allocation uses the month-end "
+        "close and the trade is made at the next trading day's close "
+        "(1-day lag). "
+        "The other days are the ones the Reality Check charts, from the "
+        "19th-to-last trading day of the month to the 2nd trading day of "
+        "next month."
     ),
 )
-exec_timing = EXEC_TIMING_OPTIONS[exec_timing_label]
+exec_offset = EXEC_TIMING_OPTIONS[exec_timing_label]
+exec_timing = {1: "last_day", 0: "first_day"}.get(exec_offset, "offset")
 
 sizing_label = st.sidebar.selectbox(
     "Position sizing",
@@ -3499,6 +5007,49 @@ cost_per_side_pct = st.sidebar.number_input(
     ),
 )
 cost_per_side = cost_per_side_pct / 100.0
+
+# ---- REALITY CHECK (added November 16, 2026) ----
+with st.sidebar.expander("Reality Check", expanded=False):
+    rc_mode_label = st.radio(
+        "Neighbor backtests",
+        options=list(RC_MODE_OPTIONS.keys()),
+        index=list(RC_MODE_OPTIONS.values()).index(RC_MODE_DEFAULT),
+        key="rc_mode",
+        help=(
+            "The Reality Check section repeats the backtest on the settings one "
+            "step away (lookback, trade day, position sizing, volatility "
+            "window) and shows how much of the result "
+            "survives. Quick check: about 70 extra backtests the first time "
+            "(about half a minute on this PC). Full check: adds the same "
+            "lookbacks on 21 trade days (about 160 more) for the typical "
+            "nearby run. Finished backtests are saved, so a repeat run reuses "
+            "them. Off: the section is not shown."
+        ),
+    )
+    rc_check_topn = st.checkbox(
+        "Also check the holdings count", value=False, key="rc_topn",
+        help="One fund more and one fewer than the count above. Adds 2 backtests.",
+    )
+    rc_check_eq = st.checkbox(
+        "Also check the equity lookback", value=False, key="rc_eq",
+        help="The equity lookbacks one month away on either leg. Adds about 3 backtests.",
+    )
+    rc_cmp_on = st.checkbox(
+        "Compare with a second basket", value=False, key="rc_cmp",
+        help=(
+            "Runs the same lookbacks and trade days on a second basket, Basket B "
+            "(your basket with funds left out or added), and shows how many of "
+            "the paired runs each basket wins. Adds about 27 backtests to a "
+            "Quick check and about 189 to a Full check, the first time; they "
+            "are saved after that. A quick screen, not the 90% odds test."
+        ),
+    )
+    # Basket B's controls are drawn into this slot further down, below the
+    # Equity Sub-Selection section, once the run's own basket is known.
+    rc_cmp_slot = st.container()
+    st.caption("Runs after each backtest. Saved results are reused until the prices behind them change.")
+rc_mode = RC_MODE_OPTIONS[rc_mode_label]
+rc_extras = tuple(x for x, on in (("topn", rc_check_topn), ("eq", rc_check_eq)) if on)
 
 # ---- DYNAMIC LEVERAGE ----
 leverage_enabled = False
@@ -4019,6 +5570,37 @@ with st.sidebar.expander("Equity Sub-Selection", expanded=True):
     )
     equity_lookbacks, equity_lookback_weights = EQUITY_LOOKBACK_OPTIONS[equity_lookback_label]
 
+# ---- BASKET B (Reality Check; added November 17, 2026) ----
+# Its controls live in the Reality Check expander (rc_cmp_slot), which comes
+# above the Fixed Basket and Equity sections, so they are drawn here, where
+# the run's own basket is known. Off unless the checkbox is ticked.
+basket_b = None
+if rc_cmp_on:
+    with rc_cmp_slot:
+        if rc_mode == "off":
+            st.caption("The Reality Check is off, so there is nothing to compare. Choose Quick check or Full check above.")
+        else:
+            _b_run_funds = list(dict.fromkeys(
+                list(selected_fixed) + (list(selected_equity) if equity_top_n > 0 else [])))
+            if "rc_b_out" in st.session_state:
+                st.session_state["rc_b_out"] = [t for t in st.session_state["rc_b_out"] if t in _b_run_funds]
+            _b_out = st.multiselect(
+                "Funds to leave out of Basket B", options=_b_run_funds, key="rc_b_out",
+                help="Basket B is your basket without these funds.",
+            )
+            _b_add_text = st.text_input(
+                "Funds to add to Basket B (comma-separated)", value="", placeholder="e.g. SHY, UUP", key="rc_b_add",
+            )
+            _b_where_opts = ["Fixed basket"] + (["Equity list"] if equity_top_n > 0 else [])
+            if "rc_b_to" in st.session_state and st.session_state["rc_b_to"] not in _b_where_opts:
+                st.session_state["rc_b_to"] = _b_where_opts[0]
+            _b_where = st.radio("Add them to", options=_b_where_opts, key="rc_b_to", horizontal=True)
+            basket_b = rc_make_basket_b(
+                selected_fixed, selected_equity, equity_top_n, _b_out,
+                [t.strip().upper() for t in _b_add_text.split(",") if t.strip()],
+                "equity" if _b_where == "Equity list" else "fixed",
+            )
+
 # ---- BACKFILL ----
 st.sidebar.markdown("---")
 
@@ -4241,18 +5823,40 @@ if run_button:
             all_tickers_needed.extend(bf_chain)
         # Pass as tuple for cache hashability
         tickers_tuple = tuple(sorted(set(all_tickers_needed)))
+        # Basket B (Reality Check; November 17, 2026): its funds download with the
+        # run's. A fund Yahoo cannot supply leaves Basket B out, and the run goes on.
+        _b_extra = (tuple(sorted(set(rc_basket_b_funds(basket_b)) - set(tickers_tuple)))
+                    if basket_b is not None else ())
 
         download_error = None
         try:
-            daily_prices = download_data(tickers_tuple, download_start, force_refresh=force_refresh)
+            daily_prices = download_data(
+                tuple(sorted(set(tickers_tuple) | set(_b_extra))), download_start, force_refresh=force_refresh)
         except MissingPriceDataError as exc:
             daily_prices, download_error = None, str(exc)
+            if _b_extra:
+                try:
+                    daily_prices = download_data(tickers_tuple, download_start, force_refresh=force_refresh)
+                    download_error, basket_b["error"] = None, str(exc)
+                except MissingPriceDataError as exc_a:
+                    daily_prices, download_error = None, str(exc_a)
 
         if daily_prices is None or daily_prices.empty:
             st.error(download_error or "Failed to download price data. Check your internet connection.")
         else:
             # Make a mutable copy (cached data is read-only)
             daily_prices = daily_prices.copy()
+
+            # Basket B's own funds must not move the main run's trading calendar (a fund on another
+            # country's exchange would add days none of the run's funds traded). If one would, Basket B
+            # is left out, named on its card, and the price table is the run's alone, as it was before.
+            if _b_extra:
+                _clash = rc_basket_b_calendar_clashes(daily_prices, _b_extra)
+                if _clash:
+                    daily_prices = daily_prices.drop(columns=[c for c in _b_extra if c in daily_prices.columns])
+                    basket_b["error"] = (", ".join(_clash) + (" prints" if len(_clash) == 1 else " print")
+                                         + " closes on days none of your other funds trade, which would "
+                                           "change the trade days of your own run.")
 
             # Apply backfill rules
             backfill_info = []
@@ -4398,6 +6002,7 @@ if run_button:
                     "sizing": sizing,
                     "exec_timing": exec_timing,
                     "exec_timing_label": exec_timing_label,
+                    **({"signal_offset": exec_offset} if exec_timing == "offset" else {}),
                     "cost_per_side": cost_per_side,
                     "backtest_start": backtest_start,
                     "backtest_end": backtest_end,
@@ -4695,6 +6300,14 @@ if run_button:
                             f"Worst single-day decline: {strat_metrics.get('Worst Day', 0):.2%} "
                             f"on {worst_day_dt.strftime('%Y-%m-%d')}"
                         )
+
+                    # ---- REALITY CHECK (added November 16, 2026) ----
+                    if rc_mode != "off":
+                        try:
+                            rc_show_panel(daily_prices, monthly_prices, params, results_df,
+                                          daily_equity, strat_metrics, rc_mode, rc_extras, basket_b)
+                        except Exception as _rc_exc:
+                            st.warning(f"The Reality Check could not run: {_rc_exc}")
 
                     # ---- CURRENT SIGNALS ----
                     signals = compute_current_signals(daily_prices, monthly_prices, params)
@@ -5110,6 +6723,7 @@ if run_button:
                         st.markdown(f"**Equity selection:** {eq_display}")
                     with col_cfg3:
                         st.markdown(f"**Final:** Top {final_top_n} by {main_lookback_label}, {sizing_info['final']}")
+                        st.markdown(f"**Trade day:** {exec_timing_label}")
                         if leverage_params_ui.get("enabled", False):
                             lp = leverage_params_ui
                             if lp.get("method") == "constant":
@@ -5211,6 +6825,12 @@ if run_button:
                             "Allocations computed from the close of the trading day before "
                             "the last trading day of each month; trades execute at the last "
                             "trading day's close (no look-ahead). "
+                        )
+                    elif exec_timing == "offset":
+                        exec_note = (
+                            "Allocations computed from the close of the trading day before "
+                            f"the {rc_trade_each(exec_offset)}; trades execute at that day's "
+                            "close (no look-ahead). "
                         )
                     else:
                         exec_note = (
