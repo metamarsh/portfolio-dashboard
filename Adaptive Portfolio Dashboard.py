@@ -4019,9 +4019,9 @@ def _rc_gap_pill(d, lvl, digits=2, scale=1.0, unit=""):
     if lvl == "na":
         return rc_pill("neutral", "neutral", "Not enough runs")
     if lvl == "bad":
-        return rc_pill("bad", "bad", "Flattered: " + _rc_signed(d, digits, scale, unit))
+        return rc_pill("bad", "bad", "Spike: " + _rc_signed(d, digits, scale, unit))
     if lvl == "warn":
-        return rc_pill("warn", "warn", "Somewhat flattered: " + _rc_signed(d, digits, scale, unit))
+        return rc_pill("warn", "warn", "Mild peak: " + _rc_signed(d, digits, scale, unit))
     if lvl == "dip":
         return rc_pill("good", "up", "Neighbors do better: " + _rc_signed(-d, digits, scale, unit))
     return rc_pill("good", "good", "Holds up: " + _rc_signed(d, digits, scale, unit))
@@ -4924,8 +4924,8 @@ main_lookbacks, main_lookback_weights = MAIN_LOOKBACK_OPTIONS[main_lookback_labe
 
 final_top_n = st.sidebar.radio(
     "How many assets to hold in the final portfolio?",
-    options=[3, 4, 5, 6],
-    index=1,
+    options=[2, 3, 4, 5, 6],
+    index=2,
     horizontal=True,
 )
 
