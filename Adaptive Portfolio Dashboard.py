@@ -3594,6 +3594,17 @@ def ae_esc(s):
     return _ae_html.escape(str(s))
 
 
+def ae_local_now():
+    """Wall-clock time in Mountain time. Streamlit Community Cloud runs on UTC, so the
+    deployed app would otherwise stamp the page seven hours ahead (as the Chart Dashboard
+    learned; its local_now() does the same)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/Denver")).replace(tzinfo=None)
+    except Exception:
+        return datetime.now()
+
+
 def ae_md(html_text):
     """Draw one HTML block. Lines are joined, so Markdown never reads a blank line or an indent."""
     st.markdown(html_text, unsafe_allow_html=True)
@@ -3670,7 +3681,7 @@ def ae_gap_pill(s_val, b_val, kind, higher_better=True, digits=2):
 
 def ae_chart_config(name):
     """Plotly toolbar settings: PNG downloads at 3x, named for the chart and the time."""
-    now = datetime.now()
+    now = ae_local_now()
     stamp = f"{now:%Y-%m-%d} {now.hour % 12 or 12}.{now:%M} {'a.m.' if now.hour < 12 else 'p.m.'}"
     return {
         "displaylogo": False,
@@ -6252,7 +6263,7 @@ else:
 # =============================================================================
 
 # Brand bar (page facelift, November 17, 2026): the Chart Dashboard's wordmark and tag.
-_ae_loaded = datetime.now()
+_ae_loaded = ae_local_now()
 ae_md(
     '<div class="ae-brand-header"><span class="ae-brand-name">Asymmetric Edge</span>'
     '<span class="ae-brand-tag">Backtest Engine</span></div>'
@@ -6614,7 +6625,7 @@ if run_button:
                     # last, so the other tabs appear while it works, and Overview's tiles are
                     # drawn again with its realistic ranges once it finishes.
                     lev_tag = " (lev)" if leverage_enabled else ""
-                    _now = datetime.now()
+                    _now = ae_local_now()
                     _ran = (f"{_now:%a}, {_now:%b} {_now.day}, {_now:%Y}, {_now.hour % 12 or 12}:{_now:%M} "
                             f"{'a.m.' if _now.hour < 12 else 'p.m.'}")
                     _px_col = daily_prices[BENCHMARK_TICKER].dropna() if BENCHMARK_TICKER in daily_prices.columns else daily_prices
