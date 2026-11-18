@@ -3765,6 +3765,7 @@ def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
     fig = go.Figure()
     vis_all = []
     lo_all, hi_all = np.inf, 0.0
+    leg_chars = 0
     for p_i, (label, yrs) in enumerate(periods):
         for rank, (name, r, color, width, dash) in reversed(list(enumerate(sets))):
             r = r.reindex(idx).dropna()
@@ -3780,7 +3781,11 @@ def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
             cagr = (v.iloc[-1] / INITIAL_CAPITAL) ** (1 / n_years) - 1
             sub = f"${v.iloc[-1]:,.0f} · {ae_neg(f'{cagr:.1%}')}"
             grp = f"{name}|{p_i}"
-            label = f"<b>{ae_esc(name)}</b>" if rank == 0 else ae_esc(name)
+            # Legend drops the ticker ("80/20 (AOA)" -> "80/20"); hover and the
+            # Performance Summary header keep it.
+            short = re.sub(r" \([A-Z]+\)", "", name)
+            label = f"<b>{ae_esc(short)}</b>" if rank == 0 else ae_esc(short)
+            leg_chars = max(leg_chars, len(short), len(re.sub(r"<[^>]+>", "", sub)))
             lo_all, hi_all = min(lo_all, float(v.min())), max(hi_all, float(v.max()))
             fig.add_trace(go.Scatter(
                 x=v.index, y=v.values, mode="lines", line=dict(color=color, width=width, dash=dash),
@@ -3816,7 +3821,9 @@ def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
     fig.update_yaxes(tickvals=ticks, ticktext=[_usd(t) for t in ticks])
     if len(periods) > 1:
         fig.update_layout(updatemenus=ae_buttons([p[0] for p in periods], args))
-    fig.update_layout(legend=dict(y=-0.1, valign="top", itemsizing="constant", groupclick="togglegroup"))
+    # Equal-width legend items, sized to the longest label, so spacing is even.
+    fig.update_layout(legend=dict(y=-0.1, valign="top", itemsizing="constant", groupclick="togglegroup",
+                                  entrywidth=max(120, 7 * leg_chars + 16), entrywidthmode="pixels"))
     return fig
 
 
