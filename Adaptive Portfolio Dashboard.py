@@ -45,8 +45,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mtick
+import plotly.graph_objects as go
 import json
 import os
+import re
 import sys
 from datetime import datetime
 
@@ -61,86 +63,185 @@ st.set_page_config(
 )
 
 # =============================================================================
-# GLOBAL STYLING (Asymmetric Edge design language, ported from app.py)
+# GLOBAL STYLING (Asymmetric Edge design language; page facelift November 17, 2026)
 # =============================================================================
-# Page chrome, typography, dividers, and tables are styled to match the public
-# Asymmetric Edge dashboard: DM Sans throughout, a white canvas, charcoal text,
-# light gridlines, and a brand-purple accent. The matplotlib rcParams below
-# carry the same look into every chart (white background, light grid, muted
-# tick labels, no top/right spines) so the backtest charts read like the
-# newsletter charts. Adjust the tokens here to restyle the whole app at once.
+# The page follows asymmetricedge.io and the public Chart Dashboard: IBM Plex
+# Serif 600 for titles and section headings, Inter for everything else, the
+# warm neutral set (ink, body, rules, wash) and the brand purple accent. The
+# Streamlit theme in .streamlit/config.toml carries the same fonts and colors
+# into the sidebar's controls; change both together. Charts are Plotly and
+# read these tokens through ae_layout() below. The matplotlib rcParams further
+# down are kept for the plot_* functions that research scripts still load.
 
 # ---- Shared design tokens ----
-AE_TEXT_PRIMARY = "#484848"     # Charcoal, headings and emphasis
-AE_TEXT_SECONDARY = "#666677"   # Axis labels, body
-AE_TEXT_MUTED = "#777788"       # Tick labels, captions
-AE_GRID = "#eeeeee"             # Gridlines
-AE_ZERO_LINE = "#dddddd"        # Zero / reference lines
-AE_SPINE = "#d9d9d9"            # Axis spines
+AE_INK = "#1C1B19"              # Titles, figures, table text
+AE_BODY = "#55524D"             # Body text, labels, captions
+AE_AXIS = "#6B6B7B"             # Chart axis and tick text
+AE_RULE = "#E6E3DC"             # Dividers and table rules
+AE_CONTROL = "#D9D5CC"          # Pills, tags, control borders
+AE_CARD = "#E2DED6"             # Card borders
+AE_WASH = "#F5F4F0"             # Light fill: table heads, notes, hover
+AE_TINT = "#F0EDF8"             # Purple tint: held rows, "now" chips
+AE_GAIN = "#1F8A4C"             # Gains
+AE_LOSS = "#B8432F"             # Losses
+AE_PLOT_GRID = "#EEEDE9"        # Chart gridlines
+AE_SERIF = "'IBM Plex Serif', Georgia, 'Times New Roman', serif"
+AE_SANS = "Inter, system-ui, -apple-system, 'Segoe UI', sans-serif"
+# Older names, still read by the matplotlib defaults below
+AE_TEXT_PRIMARY = AE_INK
+AE_TEXT_SECONDARY = AE_BODY
+AE_TEXT_MUTED = AE_AXIS
+AE_GRID = AE_PLOT_GRID
+AE_ZERO_LINE = AE_CONTROL
+AE_SPINE = AE_CONTROL
 
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600&family=Inter:wght@400;500;600;700&display=swap');
 
     /* Trim the busiest chrome but keep the run/stop toolbar and menu usable */
     footer {visibility: hidden;}
     [data-testid="stDeployButton"] {display: none;}
 
-    html, body, [class*="css"], .stApp {
-        font-family: 'DM Sans', sans-serif;
-        color: #484848;
+    html, body, [class*="css"], .stApp, [data-testid="stMarkdownContainer"] {
+        font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+        color: #1C1B19;
     }
     .stApp { background-color: #ffffff; }
+    .block-container { max-width: 1180px; padding-top: 2.6rem; }
 
-    /* Section headings (st.title -> h1, st.subheader -> h3) */
-    h1 {
-        font-weight: 700 !important;
-        letter-spacing: -0.02em;
-        color: #484848 !important;
-    }
-    h2, h3 {
-        font-weight: 700 !important;
-        color: #484848 !important;
+    /* Headings: IBM Plex Serif 600, as on asymmetricedge.io */
+    h1, h2, h3 {
+        font-family: 'IBM Plex Serif', Georgia, serif !important;
+        font-weight: 600 !important;
+        color: #1C1B19 !important;
         letter-spacing: -0.01em;
-        margin-top: 0.25rem !important;
-        margin-bottom: 0.35rem !important;
     }
+    h2, h3 { margin-top: 0.25rem !important; margin-bottom: 0.35rem !important; }
+    [data-testid="stCaptionContainer"] { color: #55524D; }
+    hr { border-color: #E6E3DC !important; }
 
-    /* Branded header */
-    .ae-brand-header {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-        margin-bottom: 0.15rem;
-    }
+    /* Brand bar */
+    .ae-brand-header { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; }
     .ae-brand-header .ae-brand-name {
-        font-size: 1.7rem;
-        font-weight: 700;
-        color: #484848;
-        letter-spacing: -0.02em;
+        font-family: 'IBM Plex Serif', Georgia, serif; font-size: 1.65rem; font-weight: 600;
+        color: #1C1B19; letter-spacing: -0.01em;
     }
     .ae-brand-header .ae-brand-tag {
-        font-size: 0.9rem;
-        color: #777788;
-        border-left: 2px solid #3A0CA3;
-        padding-left: 0.55rem;
+        font-size: 0.9rem; color: #55524D; border-left: 2px solid #3A0CA3; padding-left: 0.6rem;
     }
     .ae-brand-sub {
-        font-size: 0.82rem;
-        color: #666677;
-        margin-bottom: 1.25rem;
+        font-size: 0.85rem; color: #55524D; margin: 0.35rem 0 0.4rem 0;
+        padding-bottom: 1rem; border-bottom: 1px solid #E6E3DC;
     }
 
-    /* Dividers */
-    hr { border-color: #e8e8ee !important; }
-
     /* Pills (if used): brand-purple active state */
-    button[data-testid="stBaseButton-pills"][aria-checked="true"] {
-        background-color: #f0edf8 !important;
+    button[data-testid="stBaseButton-pills"][aria-checked="true"],
+    button[data-variant="pills"][aria-checked="true"] {
+        background-color: #F0EDF8 !important;
         border-color: #3A0CA3 !important;
         color: #3A0CA3 !important;
         font-weight: 600 !important;
     }
+
+    /* Button labels keep the button's own color (the rule above would turn them ink) */
+    button [data-testid="stMarkdownContainer"], button [data-testid="stMarkdownContainer"] p { color: inherit; }
+
+    /* Results tabs: the Chart Dashboard's menu bar, held at the top while a tab scrolls.
+       Selected by role, which both Streamlit's newer tabs and the older BaseWeb ones carry. */
+    [data-testid="stTabs"] [role="tablist"] {
+        position: sticky; top: 3.75rem; z-index: 60; background: #ffffff; gap: 10px;
+        padding-top: 4px;
+    }
+    [data-testid="stTabs"] [role="tab"] p { font-size: 15px; font-weight: 500; color: #55524D; }
+    [data-testid="stTabs"] [role="tab"]:hover p { color: #3A0CA3; }
+    [data-testid="stTabs"] [role="tab"][aria-selected="true"] p { font-weight: 600; color: #3A0CA3; }
+    [data-testid="stTabs"] [role="tabpanel"] { padding-top: 1.2rem; }
+
+    /* Bordered containers (chart cards), expanders and alerts in the warm set */
+    [class*="st-key-aecard"] { border-color: #E2DED6 !important; border-radius: 10px !important; }
+    [data-testid="stExpander"] details { border-color: #E2DED6; border-radius: 10px; }
+    [data-testid="stExpander"] summary p { font-weight: 600; color: #1C1B19; }
+    [data-testid="stAlert"] { border-radius: 10px; }
+
+    /* ---- Results page building blocks (ae-*) ---- */
+    .ae-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; font-size: 13.5px; color: #55524D; margin: 0.2rem 0 0.4rem 0; }
+    .ae-status .ae-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #1F8A4C; margin-right: 7px; vertical-align: 1px; }
+    .ae-head { display: flex; flex-direction: column; gap: 8px; margin-bottom: 0.4rem; }
+    .ae-eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #3A0CA3; }
+    .ae-title { font-family: 'IBM Plex Serif', Georgia, serif; font-size: 30px; line-height: 1.18; font-weight: 600; letter-spacing: -0.01em; color: #1C1B19; text-wrap: balance; }
+    .ae-desc { max-width: 760px; font-size: 16px; line-height: 1.6; color: #55524D; }
+    .ae-otp { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 24px; margin-top: 10px; padding: 11px 0; border-top: 1px solid #E6E3DC; border-bottom: 1px solid #E6E3DC; }
+    .ae-otp .ae-otp-l { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #55524D; }
+    .ae-otp a, .ae-otp a:visited { font-size: 14px; font-weight: 500; color: #55524D !important; text-decoration: none; }
+    .ae-otp a:hover { color: #3A0CA3 !important; }
+    .ae-h3 { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 20px; margin: 1.4rem 0 0.5rem 0; scroll-margin-top: 8rem; }
+    .ae-h3-t { font-family: 'IBM Plex Serif', Georgia, serif; font-size: 22px; line-height: 1.2; font-weight: 600; color: #1C1B19; }
+    .ae-h3-s { font-size: 14px; line-height: 1.55; color: #55524D; max-width: 780px; margin-top: 4px; }
+    .ae-anchor { scroll-margin-top: 8rem; }
+    .ae-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+    .ae-tag { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; border: 1px solid #D9D5CC; background: #ffffff; color: #55524D; font-size: 13px; font-weight: 500; white-space: nowrap; }
+    .ae-now { display: inline-flex; padding: 3px 10px; border-radius: 999px; background: #F0EDF8; color: #3A0CA3; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+    .ae-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+    .ae-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 0.6rem 0 0.4rem 0; }
+    .ae-tile { border: 1px solid #E2DED6; border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 9px; background: #ffffff; }
+    .ae-tile-l { font-size: 14px; font-weight: 500; color: #55524D; }
+    .ae-tile-v { font-size: 34px; line-height: 1; font-weight: 700; color: #3A0CA3; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+    .ae-tile-c { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; color: #55524D; }
+    .ae-tile-r { padding-top: 9px; border-top: 1px solid #E6E3DC; font-size: 12.5px; line-height: 1.45; color: #55524D; }
+    .ae-tile-r b { color: #1C1B19; font-weight: 600; }
+    .ae-card { border: 1px solid #E2DED6; border-radius: 10px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; background: #ffffff; min-width: 0; }
+    .ae-card-l { font-size: 12.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #55524D; }
+    .ae-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 14px; }
+    .ae-tbl { overflow-x: auto; border: 1px solid #E2DED6; border-radius: 10px; margin: 0.3rem 0 0.6rem 0; }
+    .ae-tbl table { width: 100%; border-collapse: collapse; font-size: 14px; color: #1C1B19; margin: 0; }
+    .ae-tbl thead th { background: #F5F4F0; text-align: right; padding: 10px 14px; font-size: 13px; font-weight: 600; color: #55524D; border-bottom: 1px solid #D9D5CC; white-space: nowrap; }
+    .ae-tbl thead th:first-child, .ae-tbl thead th.l { text-align: left; }
+    .ae-tbl tbody td { padding: 9px 14px; border-bottom: 1px solid #E6E3DC; text-align: right; font-variant-numeric: tabular-nums; vertical-align: middle; }
+    .ae-tbl tbody td:first-child, .ae-tbl tbody td.l { text-align: left; }
+    .ae-tbl tbody tr:last-child td { border-bottom: none; }
+    .ae-tbl tbody tr:hover td { background: #F5F4F0; }
+    .ae-tbl tbody tr.ae-held td { background: #F0EDF8; }
+    .ae-tbl .ae-k { color: #55524D; font-weight: 500; white-space: nowrap; }
+    .ae-tbl tr.ae-bold td { font-weight: 700; }
+    .ae-tbl tr.ae-bold td.ae-k { color: #1C1B19; font-weight: 600; }
+    .ae-tbl td.ae-strat { color: #1C1B19; font-weight: 600; }
+    .ae-tbl tr.ae-bold td.ae-strat { color: #3A0CA3; font-weight: 700; }
+    .ae-tbl .ae-date { display: block; font-size: 11.5px; font-weight: 400; color: #6B6B7B; margin-top: 2px; }
+    .ae-tbl .ae-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px; }
+    .ae-tbl .ae-asset { font-weight: 700; color: #1C1B19; }
+    .ae-tbl td:first-child { white-space: nowrap; }
+    .ae-tbl td .ae-tag { font-size: 11.5px; padding: 1px 7px; margin-left: 6px; }
+    .ae-tbl td.ae-nw, .ae-tbl th.ae-nw { white-space: nowrap; }
+    .ae-tbl .ae-asset-n { color: #55524D; font-size: 12.5px; margin-left: 6px; }
+    .ae-tip { position: relative; cursor: help; display: inline-flex; align-items: center; }
+    .ae-tip-i { display: inline-block; width: 15px; height: 15px; line-height: 15px; margin-left: 7px; border-radius: 50%; border: 1px solid #A99FCB; color: #3A0CA3; font-size: 10px; font-weight: 700; font-style: italic; text-align: center; }
+    .ae-tip-box { visibility: hidden; opacity: 0; position: absolute; left: 0; top: 135%; z-index: 1000; width: 300px; padding: 10px 12px; background: #1C1B19; color: #ffffff; font-size: 12.5px; font-weight: 400; line-height: 1.45; text-align: left; white-space: normal; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.18); transition: opacity 0.12s; }
+    .ae-tip:hover .ae-tip-box { visibility: visible; opacity: 1; }
+    .ae-notes { display: flex; flex-direction: column; border-top: 1px solid #E6E3DC; }
+    .ae-note { display: grid; grid-template-columns: minmax(120px, 170px) minmax(0, 1fr); gap: 16px; padding: 11px 0; border-bottom: 1px solid #E6E3DC; }
+    .ae-note-k { font-size: 13px; font-weight: 600; color: #1C1B19; }
+    .ae-note-v { font-size: 14px; line-height: 1.55; color: #55524D; }
+    .ae-hold { display: grid; grid-template-columns: minmax(140px, 210px) minmax(0, 1fr) 64px; gap: 14px; align-items: center; }
+    .ae-hold-t { font-size: 15px; font-weight: 700; color: #1C1B19; }
+    .ae-hold-n { display: block; font-size: 12.5px; color: #55524D; }
+    .ae-hold-b { height: 12px; border-radius: 999px; background: #F5F4F0; overflow: hidden; }
+    .ae-hold-b span { display: block; height: 100%; border-radius: 999px; background: #3A0CA3; }
+    .ae-hold-w { text-align: right; font-size: 16px; font-weight: 700; color: #1C1B19; font-variant-numeric: tabular-nums; }
+    .ae-chg { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid #E6E3DC; }
+    .ae-small { font-size: 12.5px; line-height: 1.5; color: #55524D; }
+    .ae-score { display: inline-flex; align-items: center; gap: 10px; justify-content: flex-end; }
+    .ae-score-b { position: relative; display: inline-block; width: 84px; height: 8px; background: #F5F4F0; border-radius: 999px; }
+    .ae-score-b span { position: absolute; top: 0; bottom: 0; border-radius: 999px; }
+    .ae-score-b i { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: #D9D5CC; }
+    .ae-chip { display: inline-flex; gap: 6px; align-items: baseline; padding: 3px 9px; border: 1px solid #D9D5CC; border-radius: 6px; font-size: 12.5px; white-space: nowrap; }
+    .ae-set { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; }
+    .ae-set div { display: flex; flex-direction: column; gap: 3px; padding: 12px 14px; background: #F5F4F0; border-radius: 8px; }
+    .ae-set-k { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #55524D; }
+    .ae-set-v { font-size: 14px; line-height: 1.45; color: #1C1B19; overflow-wrap: anywhere; }
+    .ae-set div.ae-wide { grid-column: 1 / -1; }
+    .ae-chart-h { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; scroll-margin-top: 8rem; }
+    .ae-chart-t { font-family: 'IBM Plex Serif', Georgia, serif; font-size: 18px; font-weight: 600; color: #1C1B19; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -152,7 +253,7 @@ plt.rcParams.update({
     "figure.dpi": 110,
     "savefig.dpi": 150,
     "font.family": "sans-serif",
-    "font.sans-serif": ["DM Sans", "Segoe UI", "Helvetica Neue", "Arial", "sans-serif"],
+    "font.sans-serif": ["Inter", "DM Sans", "Segoe UI", "Helvetica Neue", "Arial", "sans-serif"],
     "text.color": AE_TEXT_PRIMARY,
     "axes.labelcolor": AE_TEXT_SECONDARY,
     "axes.titlecolor": AE_TEXT_PRIMARY,
@@ -3467,6 +3568,383 @@ def plot_leverage_timeline(trade_df, leverage_params):
 
 
 # =============================================================================
+# RESULTS PAGE: CHARTS AND PAGE PIECES  (page facelift, November 17, 2026)
+# =============================================================================
+# The results page is six tabs (Overview, Reality Check, Signals, Returns and
+# Drawdowns, Strategy Health, Trades and Data). Charts are Plotly, drawn with
+# the tokens above; the rolling figures come from the compute_rolling_*
+# functions, unchanged. Period and frequency buttons live inside the Plotly
+# figures (updatemenus), because a Streamlit widget would rerun the script and
+# clear the results, which exist only on the run that pressed Run Backtest.
+# The matplotlib plot_* functions above are no longer drawn by the app.
+
+import html as _ae_html
+
+AE_ASSET_NAMES = {
+    "TLT": "Long-term Treasuries", "GLDM": "Gold", "GLD": "Gold", "BIL": "T-bills",
+    "BTAL": "Defensive equity", "HGER": "Broad commodities", "IBIT": "Bitcoin", "BTC-USD": "Bitcoin",
+    "QQQ": "Nasdaq-100", "IWM": "Russell 2000", "DXJ": "Japan, yen-hedged",
+    "EMXC": "Emerging markets ex China", "MNK_SYNTH": "Nikkei 225 futures (synthetic)",
+    "IEI": "Intermediate Treasuries",
+}
+AE_BENCH_NAMES = {"SPY": "S&P 500 (SPY)", "AOA": "80/20 (AOA)", "AOR": "60/40 (AOR)"}
+
+
+def ae_esc(s):
+    return _ae_html.escape(str(s))
+
+
+def ae_md(html_text):
+    """Draw one HTML block. Lines are joined, so Markdown never reads a blank line or an indent."""
+    st.markdown(html_text, unsafe_allow_html=True)
+
+
+def ae_neg(text):
+    """A typographic minus for display text (never for code or CSS)."""
+    return str(text).replace("-", "−")
+
+
+def ae_asset_name(t):
+    return AE_ASSET_NAMES.get(t) or DEFAULT_FIXED_ASSETS.get(t) or DEFAULT_EQUITY_ETFS.get(t) or ""
+
+
+def ae_pill(text, tone="neutral", glyph=None):
+    bg, fg = RC_TONES.get(tone, RC_TONES["neutral"])
+    g = f'<span aria-hidden="true">{ae_esc(glyph)}</span>' if glyph else ""
+    return f'<span class="ae-pill" style="background:{bg};color:{fg}">{g}<span>{ae_esc(text)}</span></span>'
+
+
+def ae_tag(text):
+    return f'<span class="ae-tag">{ae_esc(text)}</span>'
+
+
+def ae_now(text):
+    return f'<span class="ae-now">{ae_esc(text)}</span>'
+
+
+def ae_head(eyebrow, title, desc_html="", links=None):
+    """A tab's opening: eyebrow, serif title, description and its On this page row."""
+    parts = ['<div class="ae-head">']
+    if eyebrow:
+        parts.append(f'<div class="ae-eyebrow">{ae_esc(eyebrow)}</div>')
+    parts.append(f'<div class="ae-title">{ae_esc(title)}</div>')
+    if desc_html:
+        parts.append(f'<div class="ae-desc">{desc_html}</div>')
+    if links:
+        parts.append('<div class="ae-otp"><span class="ae-otp-l">On this page</span>'
+                     + "".join(f'<a href="#{a}">{ae_esc(t)}</a>' for a, t in links) + "</div>")
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def ae_h3(title, sub_html="", right_html="", anchor=None):
+    aid = f' id="{anchor}"' if anchor else ""
+    sub = f'<div class="ae-h3-s">{sub_html}</div>' if sub_html else ""
+    right = f'<div class="ae-row">{right_html}</div>' if right_html else ""
+    return (f'<div class="ae-h3"{aid}><div style="flex:1 1 420px;min-width:0">'
+            f'<div class="ae-h3-t">{ae_esc(title)}</div>{sub}</div>{right}</div>')
+
+
+def ae_gap_pill(s_val, b_val, kind, higher_better=True, digits=2):
+    """The gap between the strategy and a benchmark as a colored pill."""
+    if s_val is None or b_val is None or not np.isfinite(s_val) or not np.isfinite(b_val):
+        return ""
+    if kind == "dd":                      # drawdowns: values are negative; shallower is better
+        d = (abs(b_val) - abs(s_val)) * 100
+        if abs(d) < 0.05:
+            return ae_pill("level", "neutral")
+        return ae_pill(f"{abs(d):.1f} pts {'shallower' if d > 0 else 'deeper'}", "good" if d > 0 else "bad")
+    if kind == "pct":
+        d = (s_val - b_val) * 100
+        txt = f"{d:+.1f} pts"
+    else:
+        d = s_val - b_val
+        txt = f"{d:+.{digits}f}"
+    if abs(d) < (0.05 if kind == "pct" else 0.005):
+        return ae_pill("level", "neutral")
+    good = (d > 0) == higher_better
+    return ae_pill(ae_neg(txt), "good" if good else "bad")
+
+
+# ---- Plotly ----
+
+def ae_chart_config(name):
+    """Plotly toolbar settings: PNG downloads at 3x, named for the chart and the time."""
+    now = datetime.now()
+    stamp = f"{now:%Y-%m-%d} {now.hour % 12 or 12}.{now:%M} {'a.m.' if now.hour < 12 else 'p.m.'}"
+    return {
+        "displaylogo": False,
+        "toImageButtonOptions": {"format": "png", "filename": f"{name} {stamp}", "scale": 3},
+        "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d", "toggleSpikelines"],
+    }
+
+
+def ae_plot(fig, name, key):
+    st.plotly_chart(fig, width="stretch", theme=None, config=ae_chart_config(name), key=key)
+
+
+def ae_layout(fig, height=340, yfmt=None, ytitle=None, log=False, xhover="%b %Y", top=12, legend=True,
+              yrange=None, tickprefix=None):
+    fig.update_layout(
+        height=height,
+        paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+        font=dict(family=AE_SANS, size=13, color=AE_AXIS),
+        margin=dict(l=8, r=12, t=top, b=8),
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor="#ffffff", bordercolor=AE_CARD, font=dict(family=AE_SANS, size=13, color=AE_INK)),
+        showlegend=legend,
+        legend=dict(orientation="h", yanchor="top", y=-0.12, xanchor="center", x=0.5,
+                    font=dict(size=13, color=AE_INK), itemclick="toggle", itemdoubleclick="toggleothers"),
+    )
+    fig.update_xaxes(showgrid=False, linecolor=AE_CONTROL, ticks="outside", tickcolor=AE_CONTROL,
+                     hoverformat=xhover, showspikes=True, spikemode="across", spikesnap="cursor",
+                     spikethickness=1, spikecolor="#B4B8BF", spikedash="solid")
+    fig.update_yaxes(gridcolor=AE_PLOT_GRID, zeroline=False, tickformat=yfmt, automargin=True,
+                     title=dict(text=ytitle, font=dict(size=12.5, color=AE_BODY)) if ytitle else None,
+                     type="log" if log else "linear", range=yrange, tickprefix=tickprefix)
+    return fig
+
+
+def ae_buttons(labels, args_list, y=1.02):
+    """Plotly's own buttons (no Streamlit rerun), styled like the site's pills."""
+    return [dict(
+        type="buttons", direction="right", active=0, showactive=True,
+        x=0, xanchor="left", y=y, yanchor="bottom", pad=dict(r=6, t=0, b=4, l=0),
+        bgcolor="#ffffff", bordercolor=AE_CONTROL, borderwidth=1,
+        font=dict(family=AE_SANS, size=12.5, color=AE_BODY),
+        buttons=[dict(label=lab, method="update", args=a) for lab, a in zip(labels, args_list)],
+    )]
+
+
+def ae_series_set(strat_returns, bench_returns, balanced_data, lev_tag=""):
+    """(name, monthly returns, color, width, dash) for the strategy and its benchmarks, in legend order."""
+    out = [("Strategy", strat_returns, BRAND_PURPLE, 2.6, None)]
+    for e in sorted(balanced_data, key=lambda e: 0 if e["label"] == "80/20" else 1):
+        r = e["returns"].dropna() if e.get("returns") is not None else None
+        if r is not None and len(r):
+            out.append((AE_BENCH_NAMES.get(e["ticker"], e["label"]) + lev_tag, r, e["color"], 1.7, None))
+    out.append((AE_BENCH_NAMES.get(BENCHMARK_TICKER, BENCHMARK_TICKER) + lev_tag, bench_returns, BRAND_INDIGO, 1.8, None))
+    return out
+
+
+def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
+    """Growth of $10,000 on a log scale, with Plotly buttons for the last 20, 10 and 5 years."""
+    sets = ae_series_set(strat_returns, bench_returns, balanced_data, lev_tag)
+    idx = strat_returns.index
+    periods = [("Since " + idx[0].strftime("%b %Y"), None)]
+    for yrs in (20, 10, 5):
+        if len(idx) > yrs * 12 + 6:
+            periods.append((f"{yrs} years", yrs))
+    fig = go.Figure()
+    vis_all = []
+    lo_all, hi_all = np.inf, 0.0
+    for p_i, (label, yrs) in enumerate(periods):
+        for rank, (name, r, color, width, dash) in reversed(list(enumerate(sets))):
+            r = r.reindex(idx).dropna()
+            if yrs is None:
+                start = r.index[0] - pd.offsets.MonthEnd(1)
+                w = pd.concat([pd.Series([1.0], index=[start]), (1 + r).cumprod()])
+            else:
+                cut = idx[-(yrs * 12) - 1]
+                rr = r[r.index > cut]
+                w = pd.concat([pd.Series([1.0], index=[cut]), (1 + rr).cumprod()])
+            v = INITIAL_CAPITAL * w
+            n_years = max((len(w) - 1) / 12.0, 1e-9)
+            cagr = (v.iloc[-1] / INITIAL_CAPITAL) ** (1 / n_years) - 1
+            sub = f"${v.iloc[-1]:,.0f} · {ae_neg(f'{cagr:.1%}')} a year"
+            lo_all, hi_all = min(lo_all, float(v.min())), max(hi_all, float(v.max()))
+            fig.add_trace(go.Scatter(
+                x=v.index, y=v.values, mode="lines", line=dict(color=color, width=width, dash=dash),
+                legendrank=rank + 1,
+                name=f"<b>{ae_esc(name)}</b><br><span style='font-size:12px;color:{AE_BODY}'>{sub}</span>",
+                hovertemplate=f"{ae_esc(name)}: %{{y:$,.0f}}<extra></extra>", visible=(p_i == 0),
+            ))
+            vis_all.append(p_i)
+    args = [[{"visible": [v == p_i for v in vis_all]}, {"xaxis.autorange": True, "yaxis.autorange": True}]
+            for p_i in range(len(periods))]
+    ae_layout(fig, height=440, log=True, top=46)
+    ticks = []
+    e = int(np.floor(np.log10(max(lo_all, 1.0))))
+    while 10 ** e <= hi_all * 1.0001:
+        for m in (1, 2, 5):
+            if lo_all * 0.98 <= m * 10 ** e <= hi_all * 1.02:
+                ticks.append(m * 10 ** e)
+        e += 1
+
+    def _usd(t):
+        return f"${t / 1e6:g}M" if t >= 1e6 else (f"${t / 1e3:g}K" if t >= 1e3 else f"${t:g}")
+
+    fig.update_yaxes(tickvals=ticks, ticktext=[_usd(t) for t in ticks])
+    if len(periods) > 1:
+        fig.update_layout(updatemenus=ae_buttons([p[0] for p in periods], args))
+    fig.update_layout(legend=dict(y=-0.1))
+    return fig
+
+
+def ae_drawdown(w):
+    return w / w.cummax() - 1
+
+
+def ae_fig_drawdowns(strat_returns, bench_returns, balanced_data, daily_equity, spy_daily_equity, lev_tag=""):
+    """Drawdowns from the last high, daily (default) or month-end, switched by Plotly buttons."""
+    sets = ae_series_set(strat_returns, bench_returns, balanced_data, lev_tag)
+    daily = {}
+    if daily_equity is not None and len(daily_equity):
+        daily["Strategy"] = daily_equity
+        for e in balanced_data:
+            de = e.get("daily_equity")
+            if de is not None and len(de):
+                daily[AE_BENCH_NAMES.get(e["ticker"], e["label"]) + lev_tag] = de
+        if spy_daily_equity is not None and len(spy_daily_equity):
+            daily[AE_BENCH_NAMES.get(BENCHMARK_TICKER, BENCHMARK_TICKER) + lev_tag] = spy_daily_equity
+    modes = (["daily"] if daily else []) + ["monthly"]
+    fig = go.Figure()
+    tags = []
+    for m in modes:
+        for rank, (name, r, color, width, dash) in reversed(list(enumerate(sets))):
+            if m == "daily":
+                if name not in daily:
+                    continue
+                dd = ae_drawdown(daily[name].dropna())
+            else:
+                rr = r.dropna()
+                w = pd.concat([pd.Series([1.0], index=[rr.index[0] - pd.offsets.MonthEnd(1)]), (1 + rr).cumprod()])
+                dd = ae_drawdown(w)
+            strat = name == "Strategy"
+            fig.add_trace(go.Scatter(
+                x=dd.index, y=dd.values, mode="lines", line=dict(color=color, width=2.2 if strat else 1.4),
+                legendrank=rank + 1,
+                fill="tozeroy" if strat else None, fillcolor="rgba(58,12,163,0.10)" if strat else None,
+                name=f"<b>{ae_esc(name)}</b><br><span style='font-size:12px;color:{AE_BODY}'>worst {ae_neg(f'{dd.min():.1%}')}</span>",
+                hovertemplate=f"{ae_esc(name)}: %{{y:.1%}}<extra></extra>", visible=(m == modes[0]),
+            ))
+            tags.append(m)
+    ae_layout(fig, height=380, yfmt=".0%", xhover="%b %d, %Y" if modes[0] == "daily" else "%b %Y",
+              top=46 if len(modes) > 1 else 12)
+    if len(modes) > 1:
+        args = [[{"visible": [t == m for t in tags]}, {"xaxis.hoverformat": "%b %d, %Y" if m == "daily" else "%b %Y"}]
+                for m in modes]
+        fig.update_layout(updatemenus=ae_buttons(["Daily", "Month-end"], args))
+    return fig
+
+
+def ae_yearly(r):
+    r = r.dropna()
+    return (1 + r).groupby(r.index.year).prod() - 1
+
+
+def ae_fig_annual(strat_returns, bench_returns, balanced_data, lev_tag=""):
+    """Calendar-year returns: the strategy, the 80/20, the S&P 500 (60/40 one legend click away)."""
+    sets = ae_series_set(strat_returns, bench_returns, balanced_data, lev_tag)
+    years = ae_yearly(strat_returns).index
+    fig = go.Figure()
+    for name, r, color, width, dash in sets:
+        y = ae_yearly(r).reindex(years)
+        fig.add_trace(go.Bar(
+            x=[str(v) for v in years], y=y.values, name=ae_esc(name), marker=dict(color=color),
+            hovertemplate=f"{ae_esc(name)}: %{{y:.1%}}<extra></extra>",
+            visible="legendonly" if name.startswith("60/40") else True,
+        ))
+    ae_layout(fig, height=380, yfmt=".0%", xhover=None)
+    fig.update_layout(barmode="group", bargap=0.28, bargroupgap=0.06)
+    fig.update_xaxes(type="category", showspikes=False, tickangle=0, nticks=16)
+    fig.update_yaxes(zeroline=True, zerolinecolor=AE_CONTROL, zerolinewidth=1)
+    return fig
+
+
+def ae_fig_lines(lines, height=300, yfmt=None, ref=None, yrange=None, fills=None, tickfmt=None):
+    """A small rolling chart. lines: (name, series, color, width, dash); fills: (series, color) areas."""
+    fig = go.Figure()
+    for s, color in (fills or []):
+        s = s.dropna()
+        fig.add_trace(go.Scatter(x=s.index, y=s.values, mode="lines", line=dict(width=0), fill="tozeroy",
+                                 fillcolor=color, hoverinfo="skip", showlegend=False))
+    for name, s, color, width, dash in lines:
+        s = s.dropna()
+        fig.add_trace(go.Scatter(x=s.index, y=s.values, mode="lines", name=ae_esc(name),
+                                 line=dict(color=color, width=width, dash=dash),
+                                 hovertemplate=f"{ae_esc(name)}: %{{y:{yfmt or '.2f'}}}<extra></extra>"))
+    ae_layout(fig, height=height, yfmt=tickfmt or yfmt, yrange=yrange)
+    if ref is not None:
+        fig.add_hline(y=ref, line=dict(color="#9CA3AF", width=1, dash="dot"))
+    fig.update_layout(legend=dict(y=-0.16, font=dict(size=11.5)))
+    return fig
+
+
+def ae_fig_underwater(uw_s, uw_b, lev_tag=""):
+    fig = go.Figure()
+    spy = AE_BENCH_NAMES.get(BENCHMARK_TICKER, BENCHMARK_TICKER) + lev_tag
+    fig.add_trace(go.Bar(x=uw_b.index, y=uw_b.values, name=ae_esc(spy), marker=dict(color=BRAND_INDIGO, opacity=0.55),
+                         hovertemplate=f"{ae_esc(spy)}: %{{y}} months<extra></extra>"))
+    fig.add_trace(go.Bar(x=uw_s.index, y=uw_s.values, name="Strategy", marker=dict(color=BRAND_PURPLE, opacity=0.9),
+                         hovertemplate="Strategy: %{y} months<extra></extra>"))
+    ae_layout(fig, height=300)
+    fig.update_layout(barmode="overlay", bargap=0, legend=dict(y=-0.16, font=dict(size=11.5)))
+    return fig
+
+
+def ae_fig_leverage(trade_df, leverage_params):
+    """The leverage multiplier each month, colored by regime (when dynamic leverage is on)."""
+    if trade_df.empty or "leverage" not in trade_df.columns or not leverage_params.get("enabled", False):
+        return None, ""
+    if leverage_params.get("method") == "constant":
+        return None, ""
+    df = trade_df.copy()
+    df["date"] = pd.to_datetime(df["hold_month"])
+    df["lev_val"] = df["leverage"].str.replace("x", "").astype(float)
+    if leverage_params.get("method", "holdings_gate") == "holdings_gate":
+        title = f"Dynamic leverage (holdings gate: {', '.join(leverage_params.get('defensive_tickers', ['BIL', 'BTAL']))})"
+        groups = [("leveraged", "Leveraged (no defensives)", BRAND_TEAL)]
+        other = ("Neutral (defensives held)", BRAND_GRAY)
+    else:
+        title = (f"Dynamic leverage ({leverage_params.get('ticker', 'VT')} {leverage_params.get('long_sma', 200)}/"
+                 f"{leverage_params.get('short_sma', 50)}-day SMA trend)")
+        groups = [("risk-on", "Risk-on", BRAND_TEAL), ("risk-off", "Risk-off", BRAND_RED)]
+        other = ("Neutral", BRAND_GRAY)
+    fig = go.Figure()
+    known = [g[0] for g in groups]
+    for key, label, color in groups:
+        d = df[df["lev_regime"] == key]
+        fig.add_trace(go.Bar(x=d["date"], y=d["lev_val"], name=label, marker=dict(color=color, opacity=0.75),
+                             hovertemplate=f"{label}: %{{y:.2f}}x<extra></extra>"))
+    d = df[~df["lev_regime"].isin(known)]
+    fig.add_trace(go.Bar(x=d["date"], y=d["lev_val"], name=other[0], marker=dict(color=other[1], opacity=0.75),
+                         hovertemplate=f"{other[0]}: %{{y:.2f}}x<extra></extra>"))
+    ae_layout(fig, height=280, yrange=[0, max(df["lev_val"].max() * 1.15, 1.5)])
+    fig.update_layout(barmode="overlay", bargap=0.1)
+    fig.add_hline(y=1.0, line=dict(color="#9CA3AF", width=1, dash="dot"))
+    return fig, title
+
+
+def ae_holding_chips(text):
+    """'HGER: 41.9% (ret: +0.91%) | ...' from the trade log, as chips."""
+    out = []
+    for part in str(text).split(" | "):
+        m = re.match(r"\s*(\S+): ([\d.]+%) \(ret: ([+\-]?[\d.]+%)\)", part)
+        if not m:
+            if part.strip():
+                out.append(f'<span class="ae-chip">{ae_esc(part.strip())}</span>')
+            continue
+        t, w, r = m.groups()
+        col = AE_GAIN if not r.startswith("-") else AE_LOSS
+        out.append(f'<span class="ae-chip"><span style="font-weight:700;color:{AE_INK}">{ae_esc(t)}</span>'
+                   f'<span style="color:{AE_BODY}">{ae_esc(w)}</span>'
+                   f'<span style="color:{col};font-weight:600">{ae_esc(ae_neg(r))}</span></span>')
+    return '<div class="ae-row" style="gap:5px">' + "".join(out) + "</div>"
+
+
+def ae_score_bar(v, maxabs):
+    """A blended score with a small bar that grows right from zero (purple) or left (gray)."""
+    if not isinstance(v, (int, float, np.floating)) or not np.isfinite(v):
+        return "-"
+    w = min(abs(v) / maxabs, 1.0) * 50 if maxabs > 0 else 0
+    left = 50 if v >= 0 else 50 - w
+    col = BRAND_PURPLE if v >= 0 else "#C9C3B8"
+    return (f'<span class="ae-score"><span style="font-weight:600;color:{AE_INK}">{ae_esc(ae_neg(f"{v:.2%}"))}</span>'
+            f'<span class="ae-score-b" aria-hidden="true"><span style="left:{left:.1f}%;width:{w:.1f}%;background:{col}"></span><i></i></span></span>')
+
+
+# =============================================================================
 # REALITY CHECK  (added November 16, 2026)
 # =============================================================================
 # A results section of its own, below the Performance Summary. It repeats the
@@ -4645,56 +5123,56 @@ def rc_basket_card(daily_prices, monthly_prices, params, plan, runs_a, rf_monthl
 
 RC_CSS = "".join([
     "<style>",
-    ".rc-wrap{font-family:'DM Sans',sans-serif;color:#484848;font-size:14px;line-height:1.5;display:flex;flex-direction:column;gap:22px;margin:0.2rem 0 1rem 0}",
+    ".rc-wrap{font-family:Inter,system-ui,-apple-system,'Segoe UI',sans-serif;color:#55524D;font-size:14.5px;line-height:1.5;display:flex;flex-direction:column;gap:22px;margin:0.2rem 0 1rem 0}",
     ".rc-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:13px;font-weight:600;white-space:nowrap}",
     ".rc-flex{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}",
-    ".rc-bar-top{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;padding:12px 16px;background:#fafafa;border:1px solid #e6e6ee;border-radius:10px}",
-    ".rc-chip{padding:4px 10px;border-radius:6px;background:#ffffff;border:1px solid #d9d9e3;color:#2b2540;font-weight:500}",
-    ".rc-strong{font-weight:600;color:#2b2540}",
-    ".rc-muted{color:#666677}",
-    ".rc-small{font-size:13px;color:#666677}",
-    ".rc-cmp{display:flex;flex-direction:column;gap:10px;padding:16px 18px;border:1px solid #d9d2f3;background:#f7f5fb;border-radius:10px}",
-    ".rc-lead{font-size:18px;line-height:1.45;font-weight:500;color:#2b2540;max-width:880px}",
+    ".rc-bar-top{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;padding:12px 16px;background:#F5F4F0;border:1px solid #E2DED6;border-radius:10px}",
+    ".rc-chip{padding:4px 10px;border-radius:6px;background:#ffffff;border:1px solid #D9D5CC;color:#1C1B19;font-weight:500}",
+    ".rc-strong{font-weight:600;color:#1C1B19}",
+    ".rc-muted{color:#55524D}",
+    ".rc-small{font-size:13px;color:#55524D}",
+    ".rc-cmp{display:flex;flex-direction:column;gap:10px;padding:16px 18px;border:1px solid #D9D2F3;background:#F0EDF8;border-radius:10px}",
+    ".rc-lead{font-family:'IBM Plex Serif',Georgia,serif;font-size:20px;line-height:1.45;font-weight:500;color:#1C1B19;max-width:880px}",
     ".rc-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}",
-    ".rc-tile{border:1px solid #e6e6ee;border-radius:12px;padding:18px 20px;display:flex;flex-direction:column;gap:12px}",
+    ".rc-tile{border:1px solid #E2DED6;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px}",
     ".rc-nums{display:flex;flex-direction:column;gap:10px}",
     ".rc-num{display:flex;flex-direction:column;gap:2px}",
-    ".rc-big{font-size:28px;line-height:1.1;font-weight:700;color:#2b2540}",
+    ".rc-big{font-size:28px;line-height:1.1;font-weight:700;color:#1C1B19}",
     ".rc-big-p{font-size:28px;line-height:1.1;font-weight:700;color:#3A0CA3}",
-    ".rc-h3{font-size:18px;font-weight:600;color:#2b2540}",
-    ".rc-h4{font-size:16px;font-weight:600;color:#2b2540}",
+    ".rc-h3{font-family:'IBM Plex Serif',Georgia,serif;font-size:21px;font-weight:600;color:#1C1B19}",
+    ".rc-h4{font-family:'IBM Plex Serif',Georgia,serif;font-size:17px;font-weight:600;color:#1C1B19}",
     ".rc-sec{display:flex;flex-direction:column;gap:12px}",
-    ".rc-table{width:100%;border-collapse:collapse;font-size:14px;color:#484848}",
-    ".rc-table thead th{text-align:right;padding:11px 14px;border-bottom:2px solid #3A0CA3;background-color:#fafafa;font-weight:600;font-size:13px}",
+    ".rc-table{width:100%;border-collapse:collapse;font-size:14px;color:#1C1B19}",
+    ".rc-table thead th{text-align:right;padding:11px 14px;border-bottom:1px solid #D9D5CC;background-color:#F5F4F0;color:#55524D;font-weight:600;font-size:13px}",
     ".rc-table thead th:first-child,.rc-table thead th:last-child{text-align:left}",
-    ".rc-table tbody td{padding:9px 14px;border-bottom:1px solid #eeeeee;text-align:right;font-variant-numeric:tabular-nums}",
-    ".rc-table tbody td:first-child{text-align:left;color:#666677;font-weight:500}",
+    ".rc-table tbody td{padding:9px 14px;border-bottom:1px solid #E6E3DC;text-align:right;font-variant-numeric:tabular-nums}",
+    ".rc-table tbody td:first-child{text-align:left;color:#55524D;font-weight:500}",
     ".rc-table tbody td:last-child{text-align:left}",
-    ".rc-table tbody td.rc-t{font-weight:700;color:#2b2540}",
-    ".rc-card{border:1px solid #e6e6ee;border-radius:12px;padding:20px 22px;display:flex;flex-wrap:wrap;gap:20px 36px}",
+    ".rc-table tbody td.rc-t{font-weight:700;color:#1C1B19}",
+    ".rc-card{border:1px solid #E2DED6;border-radius:10px;padding:20px 22px;display:flex;flex-wrap:wrap;gap:20px 36px}",
     ".rc-left{flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:10px}",
     ".rc-right{flex:1.4 1 420px;min-width:0;display:flex;flex-direction:column;gap:8px}",
-    ".rc-sug{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding-top:12px;border-top:1px solid #eeeeee}",
+    ".rc-sug{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding-top:12px;border-top:1px solid #E6E3DC}",
     ".rc-bars{position:relative;display:flex;align-items:flex-end;gap:10px;height:150px;border-bottom:1px solid #c9c9d6}",
     ".rc-col{flex:1 1 0;min-width:0;height:150px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;cursor:help}",
-    ".rc-col-l{font-size:13px;font-weight:600;color:#2b2540;min-height:18px;font-variant-numeric:tabular-nums}",
+    ".rc-col-l{font-size:13px;font-weight:600;color:#1C1B19;min-height:18px;font-variant-numeric:tabular-nums}",
     ".rc-col-b{display:block;width:100%;max-width:60px;border-radius:4px 4px 0 0}",
     ".rc-axis{display:flex;gap:10px}",
-    ".rc-axis span{flex:1 1 0;min-width:0;text-align:center;font-size:13px;color:#666677}",
-    ".rc-axis span.rc-on{color:#2b2540;font-weight:700}",
+    ".rc-axis span{flex:1 1 0;min-width:0;text-align:center;font-size:13px;color:#55524D}",
+    ".rc-axis span.rc-on{color:#1C1B19;font-weight:700}",
     ".rc-ref{position:absolute;left:0;right:0;border-top:2px dashed #6b6b7b;pointer-events:none}",
     ".rc-dash{display:inline-block;width:24px;border-top:2px dashed #6b6b7b;vertical-align:middle;margin-right:8px}",
     ".rc-grid{display:grid;gap:6px;align-items:stretch}",
-    ".rc-gh{font-size:13px;color:#666677;text-align:center}",
-    ".rc-gr{font-size:13px;color:#666677;display:flex;align-items:center}",
-    ".rc-cell{min-height:58px;border-radius:8px;border:2px solid transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#2b2540;cursor:help}",
+    ".rc-gh{font-size:13px;color:#55524D;text-align:center}",
+    ".rc-gr{font-size:13px;color:#55524D;display:flex;align-items:center}",
+    ".rc-cell{min-height:58px;border-radius:8px;border:2px solid transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#1C1B19;cursor:help}",
     ".rc-cell-v{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}",
     ".rc-tag{font-size:11px;font-weight:700;color:#3A0CA3;text-transform:uppercase;letter-spacing:0.04em;min-height:14px}",
     ".rc-hb{display:grid;grid-template-columns:minmax(120px,240px) minmax(0,1fr) 44px;gap:12px;align-items:center}",
-    ".rc-hb-n{color:#2b2540}",
-    ".rc-hb-s{display:block;font-size:12px;color:#666677}",
+    ".rc-hb-n{color:#1C1B19}",
+    ".rc-hb-s{display:block;font-size:12px;color:#55524D}",
     ".rc-hb-b{display:block;height:18px;border-radius:0 4px 4px 0}",
-    ".rc-hb-v{text-align:right;font-weight:600;color:#2b2540;font-variant-numeric:tabular-nums}",
+    ".rc-hb-v{text-align:right;font-weight:600;color:#1C1B19;font-variant-numeric:tabular-nums}",
     "</style>",
 ])
 
@@ -4733,7 +5211,7 @@ def rc_render_html(A, settings, stats, cmp=None):
                      f'<span class="rc-flex"><span class="rc-muted">Sortino as tested</span><span class="rc-strong">{esc(cmp["tested"])}</span>{_rc_pill_html(cmp["tested_pill"])}</span>'
                      f'<span class="rc-flex"><span class="rc-muted">Neighbors\' average</span><span class="rc-strong">{esc(cmp["near"])}</span>{_rc_pill_html(cmp["near_pill"])}</span>'
                      '</div>')
-        h.append(f'<div style="color:#2b2540">{esc(cmp["text"])}</div></div>')
+        h.append(f'<div style="color:#1C1B19">{esc(cmp["text"])}</div></div>')
 
     h.append(f'<div class="rc-sec"><div class="rc-lead">{esc(A["summary"])}</div>')
     if A["chips"]:
@@ -4829,11 +5307,10 @@ def rc_render_html(A, settings, stats, cmp=None):
 def rc_show_panel(daily_prices, monthly_prices, params, results_df, daily_equity, strat_metrics, mode, extras=(),
                   basket_b=None):
     """Run the check and draw the Reality Check section (called from the results page)."""
-    st.subheader("Reality Check")
-    st.caption(
-        "How much of this result survives when the settings move a little. Every figure is a backtest: "
-        "the same run repeated on the settings one step away."
-    )
+    ae_md(ae_head(
+        "Reality Check", "How much of this result survives",
+        "The settings moved a little in each direction. Every figure is a backtest: the same run repeated "
+        "on the settings one step away."))
     rf_monthly = monthly_prices["BIL"].pct_change() if "BIL" in monthly_prices.columns else None
     cache = rc_cache_load()
     bar = st.progress(0.0, text="Reality Check: looking for saved runs")
@@ -5774,23 +6251,15 @@ else:
 # MAIN AREA
 # =============================================================================
 
-st.markdown(
-    """
-    <div class="ae-brand-header">
-        <span class="ae-brand-name">Adaptive Portfolio Strategy</span>
-        <span class="ae-brand-tag">Backtest Dashboard</span>
-    </div>
-    """,
-    unsafe_allow_html=True,
+# Brand bar (page facelift, November 17, 2026): the Chart Dashboard's wordmark and tag.
+_ae_loaded = datetime.now()
+ae_md(
+    '<div class="ae-brand-header"><span class="ae-brand-name">Asymmetric Edge</span>'
+    '<span class="ae-brand-tag">Backtest Engine</span></div>'
+    '<div class="ae-brand-sub">Relative strength momentum across an uncorrelated asset basket &middot; '
+    f'loaded {_ae_loaded:%b} {_ae_loaded.day}, {_ae_loaded:%Y}, {_ae_loaded.hour % 12 or 12}:{_ae_loaded:%M} '
+    f'{"a.m." if _ae_loaded.hour < 12 else "p.m."}</div>'
 )
-st.markdown(
-    f'<p class="ae-brand-sub">Momentum + risk-parity allocation across an '
-    f'uncorrelated asset basket &nbsp;&middot;&nbsp; '
-    f'Loaded {datetime.now().strftime("%b %d, %Y, %I:%M %p")}</p>',
-    unsafe_allow_html=True,
-)
-
-st.markdown("---")
 
 
 if run_button:
@@ -6132,719 +6601,824 @@ if run_button:
 
                     try:
                         append_to_excel(params, strat_metrics, bench_metrics, RESULTS_FILE)
-                        st.success(f"Results appended to **{os.path.basename(RESULTS_FILE)}**")
+                        _ae_logged = True
                     except Exception as e:
+                        _ae_logged = False
                         st.warning(f"Could not write to Excel (file may be open): {e}")
 
-                    # ---- METRICS TABLE (moved to top of results) ----
-                    st.subheader("Performance Summary")
-                    _avg_turnover = float(results_df["turnover"].loc[common_dates].mean())
-                    if cost_per_side > 0:
-                        st.caption(
-                            f"Strategy returns are net of trading costs: {cost_per_side:.2%} per side "
-                            f"on one-way turnover, which averaged {_avg_turnover:.1%} of the "
-                            f"portfolio a month. Benchmarks carry no trading costs."
-                        )
-                    else:
-                        st.caption(
-                            f"Strategy returns are gross, with no trading costs. One-way turnover "
-                            f"averaged {_avg_turnover:.1%} of the portfolio a month."
-                        )
-                    st.caption(sizing_info["line"])
-
-                    def fmt_pct(v):
-                        if isinstance(v, (int, float)) and not np.isnan(v):
-                            return f"{v:.2%}"
-                        elif isinstance(v, float) and np.isnan(v):
-                            return "N/A"
-                        return v
-
-                    def fmt_ratio(v):
-                        if isinstance(v, (int, float)) and not np.isnan(v):
-                            return f"{v:.2f}"
-                        elif isinstance(v, float) and np.isnan(v):
-                            return "N/A"
-                        return v
-
-                    def fmt_dollar(v):
-                        if isinstance(v, (int, float)) and not np.isnan(v):
-                            return f"${v:,.0f}"
-                        elif isinstance(v, float) and np.isnan(v):
-                            return "N/A"
-                        return v
-
-                    # Build columns: Strategy, SPY, then one per balanced benchmark
-                    metric_cols = [
-                        ("Strategy", strat_metrics),
-                        ("SPY", bench_metrics),
-                    ]
-                    for entry in balanced_data:
-                        metric_cols.append((entry["label"], entry["metrics"]))
-
-                    def _fmt_occurrence(ts, kind):
-                        # (inline text, hover text) for the date beneath a value,
-                        # matching the Chart Dashboard's labels.
-                        ts = pd.Timestamp(ts)
-                        if kind == "month":
-                            return ts.strftime("%b %Y"), ts.strftime("%B %Y")
-                        d = f"{ts.strftime('%b')} {ts.day}, {ts.year}"
-                        return d, (f"Week ending {d}" if kind == "week" else d)
-
-                    # Plain-language hover explanations for the three ratios
-                    # (added November 8, 2026).
-                    RATIO_TIPS = {
-                        "Sortino Ratio": (
-                            "Return per unit of bad volatility. It takes the yearly return above "
-                            "cash (BIL) and divides it by how large the losing months typically "
-                            "are. Gains don't count against it, only losses. Higher is better."
-                        ),
-                        "Calmar Ratio": (
-                            "Return per unit of worst loss. It divides the yearly growth rate by "
-                            "the deepest peak-to-trough drop (on month-end values). A Calmar of 1 "
-                            "means a year's return about equals the worst drawdown. It rests on "
-                            "that one episode, so it can jump when a single bad stretch changes. "
-                            "Higher is better."
-                        ),
-                        "Martin Ratio": (
-                            "Return per unit of drawdown pain. It divides the yearly return above "
-                            "cash (BIL) by the Ulcer Index, which measures how far below its last "
-                            "high the portfolio sat in every month. So it counts how deep and how "
-                            "long every drawdown was, not just the worst one, and is steadier "
-                            "than Calmar. Higher is better."
-                        ),
-                    }
-
-                    def metric_row(name, key, fmt, bold, date_key=None, date_kind=None):
-                        if name in RATIO_TIPS:
-                            name = (f'<span class="mt-tip">{name}<span class="mt-i">i</span>'
-                                    f'<span class="mt-tipbox">{RATIO_TIPS[name]}</span></span>')
-                        vals = []
-                        for _, m in metric_cols:
-                            v = fmt(m.get(key, 0))
-                            dt = m.get(date_key) if date_key else None
-                            if dt is not None and not (isinstance(dt, float) and np.isnan(dt)):
-                                inline, tip = _fmt_occurrence(dt, date_kind)
-                                v = (f'<span title="{tip}">{v}'
-                                     f'<span class="cell-date">{inline}</span></span>')
-                            vals.append(v)
-                        return (name, vals, bold)
-
-                    # Ordered with key metrics first; Sharpe and Total Months removed
-                    growth_key = f"Growth of ${INITIAL_CAPITAL:,}"
-                    metrics_rows = [
-                        metric_row("Sortino Ratio",     "Sortino Ratio",       fmt_ratio,  True),
-                        metric_row("CAGR",              "CAGR",                fmt_pct,    True),
-                        metric_row("Max Drawdown",      "Max Drawdown",        fmt_pct,    True),
-                        metric_row("Max DD (Daily)",    "Max Drawdown (Daily)",fmt_pct,    True),
-                        metric_row("Worst Single Day",  "Worst Day",           fmt_pct,    False),
-                        metric_row("Worst Week",        "Worst Week",          fmt_pct,    False, "Worst Week Date",  "week"),
-                        metric_row("Best Week",         "Best Week",           fmt_pct,    False, "Best Week Date",   "week"),
-                        metric_row("Worst Month",       "Worst Month",         fmt_pct,    False, "Worst Month Date", "month"),
-                        metric_row("Best Month",        "Best Month",          fmt_pct,    False, "Best Month Date",  "month"),
-                        metric_row("Calmar Ratio",      "Calmar Ratio",        fmt_ratio,  False),
-                        metric_row("Martin Ratio",      "Martin Ratio",        fmt_ratio,  False),
-                        metric_row("Annualized Vol",    "Annualized Vol",      fmt_pct,    False),
-                        metric_row("Best Year",         "Best Year",           fmt_pct,    False),
-                        metric_row("Worst Year",        "Worst Year",          fmt_pct,    False),
-                        metric_row("Win Rate",          "Win Rate (monthly)",  fmt_pct,    False),
-                        metric_row("Total Return",      "Total Return",        fmt_pct,    False),
-                        metric_row(growth_key,          growth_key,            fmt_dollar, False),
-                        ("Period", [m.get("Period", "") for _, m in metric_cols], False),
-                    ]
-
-                    # Build HTML table with bold top 3 rows; columns dynamic
+                    # =====================================================================
+                    # RESULTS PAGE  (page facelift, November 17, 2026)
+                    # =====================================================================
+                    # Six tabs. Everything below only draws what the backtest above produced;
+                    # no figure is computed differently than before. The Reality Check runs
+                    # last, so the other tabs appear while it works, and Overview's tiles are
+                    # drawn again with its realistic ranges once it finishes.
                     lev_tag = " (lev)" if leverage_enabled else ""
-                    header_cells = "".join(
-                        f"<th>{label}{lev_tag if label != 'Strategy' else ''}</th>"
-                        for label, _ in metric_cols
-                    )
-                    html_parts = [
-                        '<style>',
-                        ".metrics-table { width: 100%; border-collapse: collapse; font-family: 'DM Sans', sans-serif; font-size: 14px; color: #484848; margin: 0.4rem 0 0.8rem 0; }",
-                        '.metrics-table thead th { text-align: right; padding: 11px 14px; border-bottom: 2px solid #3A0CA3; background-color: #fafafa; font-weight: 600; font-size: 13px; color: #484848; letter-spacing: 0.01em; }',
-                        '.metrics-table thead th:first-child { text-align: left; }',
-                        '.metrics-table tbody td { padding: 9px 14px; border-bottom: 1px solid #eeeeee; text-align: right; font-variant-numeric: tabular-nums; }',
-                        '.metrics-table tbody td:first-child { text-align: left; color: #666677; font-weight: 500; }',
-                        '.metrics-table tbody tr:hover { background-color: #f7f5fb; }',
-                        '.metrics-table .bold-row td { font-weight: 700; color: #484848; }',
-                        '.metrics-table tbody td .cell-date { display: block; font-size: 11px; font-weight: 400; color: #777788; margin-top: 2px; letter-spacing: 0.01em; }',
-                        '.metrics-table .mt-tip { position: relative; cursor: help; }',
-                        '.metrics-table .mt-i { display: inline-block; width: 14px; height: 14px; line-height: 14px; margin-left: 6px; border-radius: 50%; border: 1px solid #9a8fc4; color: #6a5aa8; font-size: 10px; font-weight: 600; font-style: italic; text-align: center; vertical-align: 1px; }',
-                        '.metrics-table .mt-tipbox { visibility: hidden; opacity: 0; position: absolute; left: 0; top: 130%; z-index: 1000; width: 300px; padding: 10px 12px; background: #2b2540; color: #ffffff; font-size: 12.5px; font-weight: 400; line-height: 1.45; text-align: left; border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,0.18); transition: opacity 0.12s; white-space: normal; }',
-                        '.metrics-table .mt-tip:hover .mt-tipbox { visibility: visible; opacity: 1; }',
-                        '</style>',
-                        '<table class="metrics-table">',
-                        f'<thead><tr><th>Metric</th>{header_cells}</tr></thead>',
-                        '<tbody>',
-                    ]
-                    for metric, vals, is_bold in metrics_rows:
-                        row_class = ' class="bold-row"' if is_bold else ""
-                        cells = "".join(f"<td>{v}</td>" for v in vals)
-                        html_parts.append(f'<tr{row_class}><td>{metric}</td>{cells}</tr>')
-                    html_parts.append('</tbody></table>')
-                    html = "\n".join(html_parts)
+                    _now = datetime.now()
+                    _ran = (f"{_now:%a}, {_now:%b} {_now.day}, {_now:%Y}, {_now.hour % 12 or 12}:{_now:%M} "
+                            f"{'a.m.' if _now.hour < 12 else 'p.m.'}")
+                    _px_col = daily_prices[BENCHMARK_TICKER].dropna() if BENCHMARK_TICKER in daily_prices.columns else daily_prices
+                    _last_px = _px_col.index.max()
+                    ae_md('<div class="ae-status"><span><span class="ae-dot"></span>Backtest ran ' + ae_esc(_ran) + "</span>"
+                          f"<span>Prices through the {_last_px:%b} {_last_px.day}, {_last_px:%Y} close</span>"
+                          + (f"<span>Results logged to {ae_esc(os.path.basename(RESULTS_FILE))}</span>" if _ae_logged else "")
+                          + "</div>")
 
-                    st.markdown(html, unsafe_allow_html=True)
+                    tab_ov, tab_rc, tab_sig, tab_rd, tab_hl, tab_td = st.tabs(
+                        ["Overview", "Reality Check", "Signals", "Returns and Drawdowns", "Strategy Health", "Trades and Data"])
 
-                    # Show worst daily drawdown date range
-                    peak_dt = strat_metrics.get("DD Peak Date")
-                    trough_dt = strat_metrics.get("DD Trough Date")
-                    if peak_dt is not None and trough_dt is not None:
-                        st.caption(
-                            f"Worst daily drawdown: peak on {peak_dt.strftime('%Y-%m-%d')}, "
-                            f"trough on {trough_dt.strftime('%Y-%m-%d')}"
-                        )
-                    worst_day_dt = strat_metrics.get("Worst Day Date")
-                    if worst_day_dt is not None:
-                        st.caption(
-                            f"Worst single-day decline: {strat_metrics.get('Worst Day', 0):.2%} "
-                            f"on {worst_day_dt.strftime('%Y-%m-%d')}"
-                        )
 
-                    # ---- REALITY CHECK (added November 16, 2026) ----
-                    if rc_mode != "off":
-                        try:
-                            rc_show_panel(daily_prices, monthly_prices, params, results_df,
-                                          daily_equity, strat_metrics, rc_mode, rc_extras, basket_b)
-                        except Exception as _rc_exc:
-                            st.warning(f"The Reality Check could not run: {_rc_exc}")
+                    def _ae_num(mm, k):
+                        v = mm.get(k, np.nan)
+                        return float(v) if isinstance(v, (int, float, np.floating, np.integer)) else np.nan
 
-                    # ---- CURRENT SIGNALS ----
-                    signals = compute_current_signals(daily_prices, monthly_prices, params)
-                    if signals is not None:
-                        st.subheader("Current Model Signals")
-                        sig_date = signals["signal_date"]
-                        st.caption(
-                            f"As of {sig_date.strftime('%m/%d/%Y')} close · "
-                            "this is what the model would recommend if you "
-                            "rebalanced today."
-                        )
 
-                        # Holdings summary (live signal)
-                        holdings_parts = []
-                        for t in signals["final_holdings"]:
-                            w = signals["weights"].get(t, 0)
-                            holdings_parts.append(f"{w:.2%} {t}")
-                        st.markdown("**Recommended holdings:** " + " | ".join(holdings_parts))
-                        _sz_line = f"**Position sizing:** {sizing_info['label']}"
-                        _sz_live = signals.get("sizing_note") or ""
-                        if _sz_live.startswith("Inverse vol (ERC fallback"):
-                            _sz_line += (" · this signal uses inverse volatility ("
-                                         + _sz_live[len("Inverse vol ("):])
-                        st.markdown(_sz_line)
+                    def _ae_pct(v, d=1):
+                        return ae_neg(f"{v:.{d}%}") if np.isfinite(v) else "N/A"
 
-                        if signals["selected_equities"]:
-                            st.markdown(
-                                "**Equity picks:** "
-                                + ", ".join(signals["selected_equities"])
-                            )
 
-                        # Previous month-end reference line
-                        prev_date = signals.get("prev_month_end_date")
-                        prev_holdings = signals.get("prev_holdings", [])
-                        prev_weights = signals.get("prev_weights", {})
-                        if prev_date is not None and prev_holdings:
-                            prev_parts = []
-                            for t in prev_holdings:
-                                w = prev_weights.get(t, 0)
-                                prev_parts.append(f"{w:.2%} {t}")
-                            _p_data = signals.get("prev_data_date")
-                            _p_exec = signals.get("prev_exec_date")
-                            if _p_data is not None and _p_exec is not None:
-                                _p_label = (
-                                    f"from the {_p_data:%a %m/%d/%Y} close, the "
-                                    f"trading day before the {_p_exec:%a %m/%d/%Y} "
-                                    "rebalance"
-                                )
-                            else:
-                                _p_label = f"{prev_date:%m/%d/%Y} close"
-                            _p_sz = signals.get("prev_sizing_note") or ""
-                            st.caption(
-                                f"Previous month-end signal ({_p_label}): "
-                                + " | ".join(prev_parts)
-                                + (" (inverse volatility, " + _p_sz[len("Inverse vol ("):]
-                                   if _p_sz.startswith("Inverse vol (ERC fallback") else "")
-                            )
-
-                        # Current leverage signal
-                        if leverage_params_ui.get("enabled", False):
-                            method = leverage_params_ui.get("method", "holdings_gate")
-                            if method == "constant":
-                                mult_c = leverage_params_ui.get("mult_constant", 1.25)
-                                st.markdown(f"**Leverage:** {mult_c:.2f}x (constant)")
-                            elif method == "holdings_gate":
-                                # For holdings gate, use the current signal's final holdings
-                                lev_m, lev_r, lev_d = compute_leverage_signal(
-                                    daily_prices, sig_date, leverage_params_ui,
-                                    final_holdings=signals["final_holdings"]
-                                )
-                                regime_colors = {
-                                    "leveraged": "🟢", "defensive": "🟡",
-                                    "off": "⚪", "no holdings": "⚪",
-                                }
-                                emoji = regime_colors.get(lev_r, "⚪")
-                                lev_line = f"**Leverage:** {emoji} {lev_r} ({lev_m:.2f}x)"
-                                if lev_d.get("defensives_held"):
-                                    lev_line += f"  (holding {', '.join(lev_d['defensives_held'])})"
-                                st.markdown(lev_line)
-                            else:
-                                lev_m, lev_r, lev_d = compute_leverage_signal(
-                                    daily_prices, sig_date, leverage_params_ui,
-                                    final_holdings=signals["final_holdings"]
-                                )
-                                lev_ticker = leverage_params_ui["ticker"]
-                                regime_colors = {
-                                    "risk-on": "🟢", "neutral": "🟡", "risk-off": "🔴",
-                                    "off": "⚪", "no data": "⚪", "insufficient history": "⚪",
-                                }
-                                emoji = regime_colors.get(lev_r, "⚪")
-                                lev_parts = [f"**Leverage:** {emoji} {lev_r} ({lev_m:.2f}x)"]
-                                if lev_d:
-                                    lev_parts.append(
-                                        f"  {lev_ticker}: ${lev_d['price']:.2f} | "
-                                        f"{leverage_params_ui['long_sma']}d SMA: ${lev_d['long_sma']:.2f} "
-                                        f"({'above' if lev_d['price_above_long'] else 'below'}) | "
-                                        f"{leverage_params_ui['short_sma']}d SMA: "
-                                        f"{'rising' if lev_d['short_sma_rising'] else 'falling'}"
-                                    )
-                                st.markdown("  \n".join(lev_parts))
-
-                        # Current G1 cash rule signal
-                        if g1_config.get("enabled"):
-                            _g1i = signals.get("g1_info") or {}
-                            _g1s = _g1i.get("status", "no data")
-                            _g1f = g1_config["fund"]
-                            _g1_words = {
-                                "in": f"in: {_g1i.get('moved', 0.0):.2%} of the portfolio moves from BIL to {_g1f}",
-                                "no cash": "not a cash month (BIL not held)",
-                                "yield not down": "out: the yield is not falling",
-                                "fund below BIL": f"out: {_g1f}'s score is not above BIL's",
-                                "no data": "no data at this date",
-                            }
-                            _g1_emoji = {"in": "🟢", "yield not down": "🔴", "fund below BIL": "🔴"}.get(_g1s, "⚪")
-                            g1_line = f"**G1 cash rule:** {_g1_emoji} {_g1_words.get(_g1s, _g1s)}"
-                            _g1_bits = []
-                            if "yield_now" in _g1i:
-                                _g1_bits.append(
-                                    f"{g1_config['yield_ticker']} {_g1i['yield_now']:.2f} vs "
-                                    f"{_g1i['yield_then']:.2f} {g1_config['yield_lookback']} trading days earlier"
-                                )
-                            if "fund_score" in _g1i:
-                                _g1_bits.append(
-                                    f"{_g1f} score {_g1i['fund_score']:.2%} vs BIL {_g1i['bil_score']:.2%}"
-                                )
-                            if _g1_bits:
-                                g1_line += "  ·  " + "  ·  ".join(_g1_bits)
-                            st.markdown(g1_line)
-
-                        # Details table
-                        details = signals["asset_details"]
-                        vol_months_label = f"{params['vol_months']}mo Vol (ann)"
-
-                        # Build lookback column headers
-                        lb_cols = sorted(set(params["main_lookbacks"]))
-                        lb_headers = [f"{lb}mo Return" for lb in lb_cols]
-
-                        sig_html = [
-                            '<style>',
-                            ".sig-table { width: 100%; border-collapse: collapse; font-family: 'DM Sans', sans-serif; font-size: 13px; color: #484848; }",
-                            '.sig-table th { text-align: right; padding: 8px 11px; border-bottom: 2px solid #3A0CA3; background-color: #fafafa; font-weight: 600; color: #484848; }',
-                            '.sig-table th:first-child { text-align: left; }',
-                            '.sig-table td { padding: 7px 11px; border-bottom: 1px solid #eeeeee; text-align: right; font-variant-numeric: tabular-nums; }',
-                            '.sig-table td:first-child { text-align: left; color: #666677; }',
-                            '.sig-table tr:hover { background-color: #f7f5fb; }',
-                            '.sig-selected { background-color: #F0EDF8; }',
-                            '.sig-equity { font-style: italic; }',
-                            '</style>',
-                            '<table class="sig-table">',
-                            '<thead><tr>',
-                            '<th>Asset</th>',
-                        ]
-                        for h in lb_headers:
-                            sig_html.append(f'<th>{h}</th>')
-                        sig_html.append('<th>Blended</th>')
-                        sig_html.append(f'<th>{vol_months_label}</th>')
-                        sig_html.append('<th>Weight</th>')
-                        sig_html.append('<th>Status</th>')
-                        sig_html.append('</tr></thead><tbody>')
-
-                        for row in details:
-                            classes = []
-                            if row.get("Selected"):
-                                classes.append("sig-selected")
-                            class_str = f' class="{" ".join(classes)}"' if classes else ""
-
-                            sig_html.append(f'<tr{class_str}>')
-
-                            # Asset name
-                            name = row["Asset"]
-                            if row.get("Equity Pick"):
-                                name = f'<span class="sig-equity">{name} (eq)</span>'
-                            elif row.get("G1 Fund"):
-                                name = f"{name} (G1)"
-                            sig_html.append(f'<td><strong>{name}</strong></td>')
-
-                            # Lookback returns
-                            for h in lb_headers:
-                                val = row.get(h, np.nan)
-                                if isinstance(val, (int, float)) and not np.isnan(val):
-                                    sig_html.append(f'<td>{val:.2%}</td>')
-                                else:
-                                    sig_html.append('<td>-</td>')
-
-                            # Blended score
-                            blended = row.get("Blended Score", np.nan)
-                            if isinstance(blended, (int, float)) and not np.isnan(blended):
-                                sig_html.append(f'<td><strong>{blended:.2%}</strong></td>')
-                            else:
-                                sig_html.append('<td>-</td>')
-
-                            # Volatility
-                            vol = row.get(vol_months_label, np.nan)
-                            if isinstance(vol, (int, float)) and not np.isnan(vol):
-                                sig_html.append(f'<td>{vol:.2%}</td>')
-                            else:
-                                sig_html.append('<td>-</td>')
-
-                            # Weight
-                            w = row.get("Weight", 0)
-                            if w > 0:
-                                sig_html.append(f'<td><strong>{w:.2%}</strong></td>')
-                            else:
-                                sig_html.append('<td>-</td>')
-
-                            # Status
-                            if row.get("Selected"):
-                                sig_html.append('<td>HELD</td>')
-                            elif row.get("In Basket"):
-                                sig_html.append('<td>in basket</td>')
-                            else:
-                                sig_html.append('<td>-</td>')
-
-                            sig_html.append('</tr>')
-
-                        sig_html.append('</tbody></table>')
-                        st.markdown("\n".join(sig_html), unsafe_allow_html=True)
-                        st.markdown("")
-
-                        # ---- EQUITY SUB-SELECTION RANKING ----
-                        # Equities are pre-filtered by a separate equity
-                        # momentum lookback before reaching the main basket.
-                        # This table shows that ranking so it is clear why an
-                        # equity ETF strong on the main lookback can still miss
-                        # the cut (it lost the equity-lookback contest).
-                        eq_details = signals.get("equity_details", [])
-                        if eq_details:
-                            eq_lbs = params["equity_lookbacks"]
-                            if len(eq_lbs) == 1:
-                                eq_desc = f"{eq_lbs[0]}-month"
-                            else:
-                                eq_desc = (
-                                    "/".join(str(l) for l in eq_lbs) + "-month blend"
-                                )
-                            eq_top_n = params["equity_top_n"]
-
-                            st.subheader("Equity Sub-Selection Ranking")
-                            st.caption(
-                                f"Equity ETFs ranked by the equity momentum "
-                                f"lookback ({eq_desc}). The top {eq_top_n} "
-                                f"advance into the main basket; the rest are "
-                                f"dropped before the main-lookback ranking "
-                                f"above is applied. This is why an ETF can rank "
-                                f"high above yet still not be an equity pick."
-                            )
-
-                            eq_lb_cols = sorted(set(eq_lbs))
-                            eq_lb_headers = [f"{lb}mo Return" for lb in eq_lb_cols]
-
-                            eq_html = [
-                                '<table class="sig-table">',
-                                '<thead><tr>',
-                                '<th>Asset</th>',
-                            ]
-                            for h in eq_lb_headers:
-                                eq_html.append(f'<th>{h}</th>')
-                            eq_html.append('<th>Blended</th>')
-                            eq_html.append(f'<th>{vol_months_label}</th>')
-                            eq_html.append('<th>Status</th>')
-                            eq_html.append('</tr></thead><tbody>')
-
-                            for row in eq_details:
-                                is_pick = row.get("Equity Pick")
-                                class_str = ' class="sig-selected"' if is_pick else ""
-                                eq_html.append(f'<tr{class_str}>')
-
-                                eq_html.append(
-                                    f'<td><strong>{row["Asset"]}</strong></td>'
-                                )
-
-                                for h in eq_lb_headers:
-                                    val = row.get(h, np.nan)
-                                    if isinstance(val, (int, float)) and not np.isnan(val):
-                                        eq_html.append(f'<td>{val:.2%}</td>')
-                                    else:
-                                        eq_html.append('<td>-</td>')
-
-                                blended = row.get("Blended Score", np.nan)
-                                if isinstance(blended, (int, float)) and not np.isnan(blended):
-                                    eq_html.append(f'<td><strong>{blended:.2%}</strong></td>')
-                                else:
-                                    eq_html.append('<td>-</td>')
-
-                                vol = row.get(vol_months_label, np.nan)
-                                if isinstance(vol, (int, float)) and not np.isnan(vol):
-                                    eq_html.append(f'<td>{vol:.2%}</td>')
-                                else:
-                                    eq_html.append('<td>-</td>')
-
-                                if is_pick:
-                                    eq_html.append('<td>PICK</td>')
-                                else:
-                                    eq_html.append('<td>dropped</td>')
-
-                                eq_html.append('</tr>')
-
-                            eq_html.append('</tbody></table>')
-                            st.markdown("\n".join(eq_html), unsafe_allow_html=True)
-                            st.markdown("")
-
-                    # ---- CHARTS ----
-                    st.subheader("Equity Curve and Drawdown")
-                    fig = plot_equity_and_drawdown(strat_returns, bench_returns, balanced_data)
-                    st.pyplot(fig)
-                    plt.close(fig)
-
-                    # Daily drawdown chart
-                    if len(daily_equity) > 0:
-                        fig_dd = plot_daily_drawdown(
-                            daily_equity,
-                            daily_equity_bench=spy_daily_equity if len(spy_daily_equity) > 0 else None,
-                            balanced_data=balanced_data,
-                        )
-                        if fig_dd is not None:
-                            st.pyplot(fig_dd)
-                            plt.close(fig_dd)
-
-                    st.subheader("Annual Returns")
-                    fig2 = plot_annual_returns(strat_returns, bench_returns)
-                    st.pyplot(fig2)
-                    plt.close(fig2)
-
-                    # ---- STRATEGY HEALTH ----
-                    st.subheader("Strategy Health")
-                    st.caption(
-                        "Rolling diagnostics to assess whether strategy performance "
-                        "is holding up or deteriorating over time. All rolling windows are 36 months "
-                        "unless otherwise noted."
-                    )
-
-                    fig_rs = plot_rolling_sortino(strat_returns, bench_returns, rf_monthly)
-                    st.pyplot(fig_rs)
-                    plt.close(fig_rs)
-
-                    fig_rcal = plot_rolling_calmar(
-                        strat_returns,
-                        bench_returns,
-                        daily_equity_strat=daily_equity if len(daily_equity) > 0 else None,
-                        daily_equity_bench=spy_daily_equity if len(spy_daily_equity) > 0 else None,
-                    )
-                    st.pyplot(fig_rcal)
-                    plt.close(fig_rcal)
-
-                    fig_rc = plot_rolling_cagr(strat_returns, bench_returns)
-                    st.pyplot(fig_rc)
-                    plt.close(fig_rc)
-
-                    fig_rh = plot_rolling_hit_rate(strat_returns, bench_returns)
-                    st.pyplot(fig_rh)
-                    plt.close(fig_rh)
-
-                    fig_uw = plot_underwater(strat_returns, bench_returns)
-                    st.pyplot(fig_uw)
-                    plt.close(fig_uw)
-
-                    fig_re = plot_rolling_excess(strat_returns, bench_returns)
-                    st.pyplot(fig_re)
-                    plt.close(fig_re)
-
-                    # Leverage timeline (only shown when leverage is enabled)
-                    if leverage_params_ui.get("enabled", False):
-                        fig_lev = plot_leverage_timeline(trade_df, leverage_params_ui)
-                        if fig_lev is not None:
-                            st.pyplot(fig_lev)
-                            plt.close(fig_lev)
-
-                    # ---- TRADE LOG ----
-                    st.subheader("Trade Log")
-                    st.caption(
-                        "Most recent trades shown first. Expand to see all monthly rebalance decisions. "
-                        f"The sizing column says how each month was weighted ({sizing_info['label']} in this run)."
-                    )
-                    trade_df_display = trade_df.iloc[::-1].reset_index(drop=True)
-                    with st.expander("Show full trade log"):
-                        st.dataframe(trade_df_display, width="stretch", hide_index=True)
-
-                    # ---- DOWNLOADS ----
-                    st.subheader("Downloads")
-                    col_dl1, col_dl2 = st.columns(2)
-                    with col_dl1:
-                        st.download_button(
-                            "Download Trade Log (CSV)",
-                            data=trade_df.to_csv(index=False),
-                            file_name=f"Trade Log ({sizing_info['file_tag']}).csv",
-                            mime="text/csv",
-                        )
-                    with col_dl2:
-                        export_df = pd.DataFrame({
-                            "date": strat_returns.index,
-                            "strategy_return": strat_returns.values,
-                            "benchmark_return": bench_returns.values,
-                        })
-                        export_df["strategy_cumulative"] = INITIAL_CAPITAL * (1 + export_df["strategy_return"]).cumprod()
-                        export_df["benchmark_cumulative"] = INITIAL_CAPITAL * (1 + export_df["benchmark_return"]).cumprod()
-                        export_df["position_sizing"] = sizing_info["label"]
-                        st.download_button(
-                            "Download Monthly Returns (CSV)",
-                            data=export_df.to_csv(index=False),
-                            file_name=f"Monthly Returns ({sizing_info['file_tag']}).csv",
-                            mime="text/csv",
-                        )
-
-                    # ---- CONFIG SUMMARY & DATA NOTES (at end of dashboard) ----
-                    st.markdown("---")
-                    col_cfg1, col_cfg2, col_cfg3 = st.columns(3)
-                    with col_cfg1:
-                        st.markdown(f"**Fixed basket:** {', '.join(selected_fixed) if selected_fixed else 'None'}")
-                        if backfill_rules:
-                            bf_parts = [f"{k} <- {', '.join(v)}" for k, v in backfill_rules.items()]
-                            st.markdown(f"**Backfills:** {'; '.join(bf_parts)}")
-                    with col_cfg2:
-                        eq_display = f"Top {equity_top_n} from {', '.join(selected_equity)}" if equity_top_n > 0 else "None"
-                        st.markdown(f"**Equity selection:** {eq_display}")
-                    with col_cfg3:
-                        st.markdown(f"**Final:** Top {final_top_n} by {main_lookback_label}, {sizing_info['final']}")
-                        st.markdown(f"**Trade day:** {exec_timing_label}")
-                        if leverage_params_ui.get("enabled", False):
-                            lp = leverage_params_ui
-                            if lp.get("method") == "constant":
-                                cost_pct = lp.get("leverage_cost_annual", 0.0) * 100
-                                cost_str = f", cost {cost_pct:.1f}%" if cost_pct > 0 else ""
-                                st.markdown(
-                                    f"**Leverage:** Constant {lp.get('mult_constant', 1.25):.2f}x{cost_str}"
-                                )
-                            elif lp.get("method") == "holdings_gate":
-                                defensives = ", ".join(lp.get("defensive_tickers", []))
-                                cost_pct = lp.get("leverage_cost_annual", 0.0) * 100
-                                cost_str = f", cost {cost_pct:.1f}%" if cost_pct > 0 else ""
-                                st.markdown(
-                                    f"**Leverage:** Holdings gate ({defensives}), "
-                                    f"{lp.get('mult_leveraged', 1.25):.2f}x when clear{cost_str}"
-                                )
-                            elif lp.get("method") == "vt_trend":
-                                st.markdown(
-                                    f"**Leverage:** {lp['ticker']} {lp['long_sma']}/{lp['short_sma']}d SMA, "
-                                    f"on={lp['mult_risk_on']:.2f}x / off={lp['mult_risk_off']:.2f}x"
-                                )
-                        if g1_config.get("enabled"):
-                            st.markdown(f"**G1 cash rule:** {g1_label(g1_config)}")
-
-                    # ---- BACKFILL DETAILS & DATA NOTES (at end of dashboard) ----
-                    if backfill_info:
-                        st.markdown("---")
-                        with st.expander("Backfill details (which ticker covers which dates)"):
-                            st.dataframe(pd.DataFrame(backfill_info), width="stretch", hide_index=True)
-
-                    # ---- DATA ADJUSTMENTS: why each asset's history is built as it is ----
-                    _run_assets = list(dict.fromkeys(
-                        list(selected_fixed)
-                        + (list(selected_equity) if equity_top_n > 0 else [])
-                        + [c["ticker"] for c in BAL_BENCHMARKS]
-                        + ([g1_config["fund"]] if g1_config.get("enabled") else [])
-                    ))
-                    _adj_assets = [t for t in _run_assets if t in DATA_ADJUSTMENT_NOTES]
-                    if _adj_assets:
-                        _default_chains = {
-                            p.strip().upper(): [x.strip().upper() for x in c.split(",") if x.strip()]
-                            for p, c in BACKFILL_DEFAULTS if p.strip()
-                        }
-                        # The G1 fund's default chain lives in G1_DEFAULTS.
-                        _default_chains.setdefault(G1_DEFAULTS["fund"], list(G1_DEFAULTS["backfill"]))
-                        with st.expander("Data adjustments (why some histories are stand-ins or repaired)"):
-                            st.caption(
-                                "The table above shows which source covers which dates; these notes say why. "
-                                "They describe the default rules."
-                            )
-                            for _t in _adj_assets:
-                                _note = DATA_ADJUSTMENT_NOTES[_t]
-                                if _t in _default_chains and backfill_rules.get(_t) != _default_chains[_t]:
-                                    _used = ", ".join(backfill_rules.get(_t, [])) or "none"
-                                    _note += (
-                                        f" *This run's backfill rule for {_t} is not the default "
-                                        f"({_used}), so the table above, not this note, describes it.*"
-                                    )
-                                st.markdown(f"**{_t}.** {_note}")
-                            st.caption(
-                                "The full record, with how each stand-in was checked against its real fund and "
-                                "when each change was made: Data Adjustments.md in the Backtest Engine project folder."
-                            )
-
-                    lev_note = ""
+                    # ---- run notes (formerly the captions under the table and the page's last caption) ----
                     if leverage_params_ui.get("enabled", False):
                         lp = leverage_params_ui
                         if lp.get("method") == "constant":
                             cost_pct = lp.get("leverage_cost_annual", 0.0) * 100
                             cost_str = f" Borrowing cost: {cost_pct:.1f}% annual on leveraged portion." if cost_pct > 0 else ""
-                            lev_note = (
-                                f" Constant {lp.get('mult_constant', 1.25):.2f}x leverage applied "
-                                f"to strategy and benchmarks.{cost_str}"
-                            )
+                            lev_note = (f" Constant {lp.get('mult_constant', 1.25):.2f}x leverage applied "
+                                        f"to strategy and benchmarks.{cost_str}")
                         elif lp.get("method") == "holdings_gate":
                             defensives = ", ".join(lp.get("defensive_tickers", []))
                             cost_pct = lp.get("leverage_cost_annual", 0.0) * 100
                             cost_str = f" Borrowing cost: {cost_pct:.1f}% annual on leveraged portion." if cost_pct > 0 else ""
-                            lev_note = (
-                                f" Dynamic leverage: {lp.get('mult_leveraged', 1.25):.2f}x when no "
-                                f"defensive assets ({defensives}) are in the final portfolio, "
-                                f"1.0x otherwise.{cost_str}"
-                            )
+                            lev_note = (f" Dynamic leverage: {lp.get('mult_leveraged', 1.25):.2f}x when no "
+                                        f"defensive assets ({defensives}) are in the final portfolio, 1.0x otherwise.{cost_str}")
                         elif lp.get("method") == "vt_trend":
-                            lev_note = (
-                                " Dynamic leverage scales monthly returns by a multiplier "
-                                f"({lp['mult_risk_off']:.2f}x to {lp['mult_risk_on']:.2f}x) "
-                                f"based on {lp['ticker']} trend regime."
-                            )
+                            lev_note = (" Dynamic leverage scales monthly returns by a multiplier "
+                                        f"({lp['mult_risk_off']:.2f}x to {lp['mult_risk_on']:.2f}x) "
+                                        f"based on {lp['ticker']} trend regime.")
+                        else:
+                            lev_note = ""
+                    else:
+                        lev_note = ""
                     g1_note = ""
                     if g1_config.get("enabled"):
-                        g1_note = (
-                            f" G1 cash rule: {g1_label(g1_config)}, read at the same signal "
-                            f"date as the rest of the allocation (not part of the strategy; "
-                            f"the trade log's g1 column gives each month's outcome)."
-                        )
+                        g1_note = (f" G1 cash rule: {g1_label(g1_config)}, read at the same signal "
+                                   f"date as the rest of the allocation (not part of the strategy; "
+                                   f"the trade log's g1 column gives each month's outcome).")
                     if exec_timing == "last_day":
-                        exec_note = (
-                            "Allocations computed from the close of the trading day before "
-                            "the last trading day of each month; trades execute at the last "
-                            "trading day's close (no look-ahead). "
-                        )
+                        exec_note = ("Allocations computed from the close of the trading day before "
+                                     "the last trading day of each month; trades execute at the last "
+                                     "trading day's close (no look-ahead). ")
                     elif exec_timing == "offset":
-                        exec_note = (
-                            "Allocations computed from the close of the trading day before "
-                            f"the {rc_trade_each(exec_offset)}; trades execute at that day's "
-                            "close (no look-ahead). "
-                        )
+                        exec_note = ("Allocations computed from the close of the trading day before "
+                                     f"the {rc_trade_each(exec_offset)}; trades execute at that day's "
+                                     "close (no look-ahead). ")
                     else:
-                        exec_note = (
-                            "Signals computed at month-end close; trades execute at next "
-                            "trading day's close (1-day lag). "
-                        )
-                    st.caption(
-                        "All prices are dividend- and split-adjusted (total return). "
-                        + exec_note
-                        + sizing_info["note"] + " "
-                        + "Sortino ratio uses BIL as the risk-free rate."
-                        + lev_note
-                        + g1_note
-                    )
+                        exec_note = ("Signals computed at month-end close; trades execute at next "
+                                     "trading day's close (1-day lag). ")
+                    _avg_turnover = float(results_df["turnover"].loc[common_dates].mean())
+                    if cost_per_side > 0:
+                        _cost_note = (f"Strategy returns are net of trading costs: {cost_per_side:.2%} per side "
+                                      f"on one-way turnover, which averaged {_avg_turnover:.1%} of the "
+                                      f"portfolio a month. Benchmarks carry no trading costs.")
+                    else:
+                        _cost_note = (f"Strategy returns are gross, with no trading costs. One-way turnover "
+                                      f"averaged {_avg_turnover:.1%} of the portfolio a month.")
+                    _dd_note = ""
+                    peak_dt = strat_metrics.get("DD Peak Date")
+                    trough_dt = strat_metrics.get("DD Trough Date")
+                    if peak_dt is not None and trough_dt is not None:
+                        _dd_note = f"Daily: peak on {peak_dt:%B} {peak_dt.day}, {peak_dt:%Y}, trough on {trough_dt:%B} {trough_dt.day}, {trough_dt:%Y}. "
+                    worst_day_dt = strat_metrics.get("Worst Day Date")
+                    if worst_day_dt is not None:
+                        _wd = strat_metrics.get("Worst Day", 0)
+                        _wd_txt = ae_neg(f"{_wd:.2%}")
+                        _dd_note += f"Worst single day: {_wd_txt} on {worst_day_dt:%B} {worst_day_dt.day}, {worst_day_dt:%Y}."
+                    _method_note = ("All prices are dividend- and split-adjusted (total return). " + exec_note
+                                    + sizing_info["note"] + " Sortino ratio uses BIL as the risk-free rate." + lev_note + g1_note)
+
+                    # ---- headline figures ----
+                    s_sort, s_cagr = _ae_num(strat_metrics, "Sortino Ratio"), _ae_num(strat_metrics, "CAGR")
+                    s_dd = _ae_num(strat_metrics, "Max Drawdown (Daily)")
+                    if not np.isfinite(s_dd):
+                        s_dd = _ae_num(strat_metrics, "Max Drawdown")
+                    s_mar = _ae_num(strat_metrics, "Martin Ratio")
+                    _b8020 = next((e for e in balanced_data if e["label"] == "80/20" and e.get("metrics")), None)
+                    _cmp_label = ("80/20" + lev_tag) if _b8020 else ("S&P 500" + lev_tag)
+                    _cmp_m = _b8020["metrics"] if _b8020 else bench_metrics
+
+
+                    def _ae_dd(mm):
+                        v = _ae_num(mm, "Max Drawdown (Daily)")
+                        return v if np.isfinite(v) else _ae_num(mm, "Max Drawdown")
+
+
+                    _n_m = len(strat_returns)
+                    _span = f"{_n_m / 12:.0f} years" if _n_m >= 24 else f"{_n_m} months"
+                    _p0, _p1 = strat_returns.index[0], strat_returns.index[-1]
+                    _eyebrow = (f"Backtest · {_p0:%B %Y} to {_p1:%B %Y} · "
+                                + ("net of trading costs" if cost_per_side > 0 else "gross, no trading costs")
+                                + (" · leveraged" if leverage_enabled else ""))
+                    _spy_cagr, _spy_dd = _ae_num(bench_metrics, "CAGR"), _ae_dd(bench_metrics)
+                    if _b8020:
+                        _desc = (f"{_ae_pct(s_cagr)} a year against {_ae_pct(_ae_num(_b8020['metrics'], 'CAGR'))} for the 80/20 "
+                                 f"portfolio and {_ae_pct(_spy_cagr)} for the S&amp;P 500, while the deepest daily drawdown was "
+                                 f"{abs(s_dd):.1%} against their {abs(_ae_dd(_b8020['metrics'])):.1%} and {abs(_spy_dd):.1%}.")
+                    else:
+                        _desc = (f"{_ae_pct(s_cagr)} a year against {_ae_pct(_spy_cagr)} for the S&amp;P 500, while the deepest "
+                                 f"daily drawdown was {abs(s_dd):.1%} against its {abs(_spy_dd):.1%}.")
+                    if leverage_enabled:
+                        _desc += " The benchmarks carry the same leverage."
+                    if rc_mode != "off":
+                        _desc += " The realistic ranges come from the Reality Check."
+
+
+                    def _ae_tiles_html(rc_tiles=None, rc_note=""):
+                        """The four headline tiles; the bottom line carries the Reality Check's range once it has run."""
+                        by = {}
+                        for t in rc_tiles or []:
+                            nm = str(t.get("name", "")).lower()
+                            key = "sortino" if nm.startswith("sortino") else "cagr" if nm.startswith("return") else \
+                                  "dd" if ("drawdown" in nm or nm.startswith("worst")) else nm
+                            by[key] = t
+
+                        def bottom(key, fallback):
+                            t = by.get(key)
+                            if t:
+                                return (f'<div class="ae-row"><b>Realistic range {ae_esc(t["range"])}</b>{_rc_pill_html(t["pill"])}</div>'
+                                        f'<div>{ae_esc(t["note"])}</div>')
+                            return ae_esc(fallback)
+
+                        spec = [
+                            ("Sortino ratio", f"{s_sort:.2f}", _ae_num(_cmp_m, "Sortino Ratio"), "ratio", "sortino", True),
+                            ("Annual growth rate", _ae_pct(s_cagr), _ae_num(_cmp_m, "CAGR"), "pct", "cagr", True),
+                            ("Max drawdown, daily", _ae_pct(s_dd), _ae_dd(_cmp_m), "dd", "dd", True),
+                            ("Martin ratio", f"{s_mar:.2f}", _ae_num(_cmp_m, "Martin Ratio"), "ratio", "martin", True),
+                        ]
+                        tiles = []
+                        for label, val, bval, kind, key, hb in spec:
+                            b_txt = (f"{bval:.2f}" if kind == "ratio" else _ae_pct(bval)) if np.isfinite(bval) else "N/A"
+                            s_raw = {"sortino": s_sort, "cagr": s_cagr, "dd": s_dd, "martin": s_mar}[key]
+                            pill = ae_gap_pill(s_raw, bval, kind, hb)
+                            fb = ("Return over the depth and length of every drawdown." if key == "martin" else rc_note)
+                            tiles.append(f'<div class="ae-tile"><div class="ae-tile-l">{ae_esc(label)}</div>'
+                                         f'<div class="ae-tile-v">{ae_esc(val)}</div>'
+                                         f'<div class="ae-tile-c"><span>{ae_esc(_cmp_label)} {ae_esc(b_txt)}</span>{pill}</div>'
+                                         f'<div class="ae-tile-r">{bottom(key, fb)}</div></div>')
+                        return '<div class="ae-tiles">' + "".join(tiles) + "</div>"
+
+
+                    _rc_wait = ("Reality Check running; its range appears here when it finishes." if rc_mode != "off"
+                                else "Reality Check is off for this run (sidebar).")
+
+                    # =====================================================================
+                    # OVERVIEW
+                    # =====================================================================
+                    with tab_ov:
+                        ae_md(ae_head(_eyebrow, f"Sortino {s_sort:.2f} over {_span}, with a worst drop of {abs(s_dd):.1%}", _desc,
+                                      [("ov-growth", "Growth of $10,000"), ("ov-summary", "Performance Summary"), ("ov-notes", "Run notes")]))
+                        _ov_tiles = st.empty()
+                        _ov_tiles.markdown(_ae_tiles_html(None, _rc_wait), unsafe_allow_html=True)
+
+                        ae_md(ae_h3(f"Growth of ${INITIAL_CAPITAL:,}",
+                                    "Log scale, so equal heights are equal percentage gains. Hover for each month's values; "
+                                    "the buttons change the period and a legend click hides a line.", anchor="ov-growth"))
+                        ae_plot(ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag), f"Growth of ${INITIAL_CAPITAL:,}",
+                                "ae_growth")
+
+                        # ---- PERFORMANCE SUMMARY ----
+                        def fmt_pct(v):
+                            if isinstance(v, (int, float)) and not np.isnan(v):
+                                return ae_neg(f"{v:.2%}")
+                            elif isinstance(v, float) and np.isnan(v):
+                                return "N/A"
+                            return v
+
+                        def fmt_ratio(v):
+                            if isinstance(v, (int, float)) and not np.isnan(v):
+                                return ae_neg(f"{v:.2f}")
+                            elif isinstance(v, float) and np.isnan(v):
+                                return "N/A"
+                            return v
+
+                        def fmt_dollar(v):
+                            if isinstance(v, (int, float)) and not np.isnan(v):
+                                return f"${v:,.0f}"
+                            elif isinstance(v, float) and np.isnan(v):
+                                return "N/A"
+                            return v
+
+                        # Columns: Strategy, SPY, then one per balanced benchmark (as before)
+                        metric_cols = [("Strategy", strat_metrics, BRAND_PURPLE), (BENCHMARK_TICKER, bench_metrics, BRAND_INDIGO)]
+                        for entry in balanced_data:
+                            metric_cols.append((entry["label"], entry["metrics"], entry["color"]))
+
+                        def _fmt_occurrence(ts, kind):
+                            # (inline text, hover text) for the date beneath a value,
+                            # matching the Chart Dashboard's labels.
+                            ts = pd.Timestamp(ts)
+                            if kind == "month":
+                                return ts.strftime("%b %Y"), ts.strftime("%B %Y")
+                            d = f"{ts.strftime('%b')} {ts.day}, {ts.year}"
+                            return d, (f"Week ending {d}" if kind == "week" else d)
+
+                        # Plain-language hover explanations for the three ratios (added November 8, 2026).
+                        RATIO_TIPS = {
+                            "Sortino Ratio": (
+                                "Return per unit of bad volatility. It takes the yearly return above "
+                                "cash (BIL) and divides it by how large the losing months typically "
+                                "are. Gains don't count against it, only losses. Higher is better."
+                            ),
+                            "Calmar Ratio": (
+                                "Return per unit of worst loss. It divides the yearly growth rate by "
+                                "the deepest peak-to-trough drop (on month-end values). A Calmar of 1 "
+                                "means a year's return about equals the worst drawdown. It rests on "
+                                "that one episode, so it can jump when a single bad stretch changes. "
+                                "Higher is better."
+                            ),
+                            "Martin Ratio": (
+                                "Return per unit of drawdown pain. It divides the yearly return above "
+                                "cash (BIL) by the Ulcer Index, which measures how far below its last "
+                                "high the portfolio sat in every month. So it counts how deep and how "
+                                "long every drawdown was, not just the worst one, and is steadier "
+                                "than Calmar. Higher is better."
+                            ),
+                        }
+
+                        def metric_row(name, key, fmt, bold, date_key=None, date_kind=None):
+                            label = ae_esc(name)
+                            if name in RATIO_TIPS:
+                                label = (f'<span class="ae-tip">{ae_esc(name)}<span class="ae-tip-i">i</span>'
+                                         f'<span class="ae-tip-box">{ae_esc(RATIO_TIPS[name])}</span></span>')
+                            vals = []
+                            for _, m, _c in metric_cols:
+                                v = ae_esc(fmt(m.get(key, 0)))
+                                dt = m.get(date_key) if date_key else None
+                                if dt is not None and not (isinstance(dt, float) and np.isnan(dt)):
+                                    inline, tip = _fmt_occurrence(dt, date_kind)
+                                    v = f'<span title="{ae_esc(tip)}">{v}<span class="ae-date">{ae_esc(inline)}</span></span>'
+                                vals.append(v)
+                            return (label, vals, bold)
+
+                        # Ordered with key metrics first; Sharpe and Total Months removed
+                        growth_key = f"Growth of ${INITIAL_CAPITAL:,}"
+                        metrics_rows = [
+                            metric_row("Sortino Ratio",     "Sortino Ratio",       fmt_ratio,  True),
+                            metric_row("CAGR",              "CAGR",                fmt_pct,    True),
+                            metric_row("Max Drawdown",      "Max Drawdown",        fmt_pct,    True),
+                            metric_row("Max DD (Daily)",    "Max Drawdown (Daily)", fmt_pct,   True),
+                            metric_row("Worst Single Day",  "Worst Day",           fmt_pct,    False),
+                            metric_row("Worst Week",        "Worst Week",          fmt_pct,    False, "Worst Week Date",  "week"),
+                            metric_row("Best Week",         "Best Week",           fmt_pct,    False, "Best Week Date",   "week"),
+                            metric_row("Worst Month",       "Worst Month",         fmt_pct,    False, "Worst Month Date", "month"),
+                            metric_row("Best Month",        "Best Month",          fmt_pct,    False, "Best Month Date",  "month"),
+                            metric_row("Calmar Ratio",      "Calmar Ratio",        fmt_ratio,  False),
+                            metric_row("Martin Ratio",      "Martin Ratio",        fmt_ratio,  False),
+                            metric_row("Annualized Vol",    "Annualized Vol",      fmt_pct,    False),
+                            metric_row("Best Year",         "Best Year",           fmt_pct,    False),
+                            metric_row("Worst Year",        "Worst Year",          fmt_pct,    False),
+                            metric_row("Win Rate",          "Win Rate (monthly)",  fmt_pct,    False),
+                            metric_row("Total Return",      "Total Return",        fmt_pct,    False),
+                            metric_row(growth_key,          growth_key,            fmt_dollar, False),
+                            ("Period", [ae_esc(m.get("Period", "")) for _, m, _c in metric_cols], False),
+                        ]
+                        header_cells = "".join(
+                            f'<th><span class="ae-sw" style="background:{c}"></span>{ae_esc(label)}{lev_tag if label != "Strategy" else ""}</th>'
+                            for label, _m, c in metric_cols)
+                        html_parts = ['<div class="ae-tbl"><table>', f"<thead><tr><th>Metric</th>{header_cells}</tr></thead><tbody>"]
+                        for metric, vals, is_bold in metrics_rows:
+                            cells = "".join(('<td class="ae-strat">' if i == 0 else "<td>") + v + "</td>" for i, v in enumerate(vals))
+                            html_parts.append(('<tr class="ae-bold">' if is_bold else "<tr>") + f'<td class="ae-k">{metric}</td>{cells}</tr>')
+                        html_parts.append("</tbody></table></div>")
+                        ae_md(ae_h3("Performance Summary", "Key figures first, in bold. Hover the i beside a ratio for what it measures.",
+                                    anchor="ov-summary"))
+                        ae_md("".join(html_parts))
+
+                        ae_md(ae_h3("Run notes", anchor="ov-notes"))
+                        _notes = [("Trading costs", _cost_note), ("Position sizing", sizing_info["line"])]
+                        if _dd_note:
+                            _notes.append(("Worst drawdown", _dd_note))
+                        _notes.append(("How it is calculated", _method_note))
+                        ae_md('<div class="ae-notes">' + "".join(
+                            f'<div class="ae-note"><div class="ae-note-k">{ae_esc(k)}</div><div class="ae-note-v">{ae_esc(v)}</div></div>'
+                            for k, v in _notes) + "</div>")
+
+                    # =====================================================================
+                    # SIGNALS
+                    # =====================================================================
+                    with tab_sig:
+                        signals = compute_current_signals(daily_prices, monthly_prices, params)
+                        if signals is None:
+                            ae_md(ae_head("Current Model Signals", "No current signal",
+                                          "The model could not compute a signal for the latest close."))
+                        else:
+                            sig_date = signals["signal_date"]
+                            eq_details = signals.get("equity_details", [])
+                            _sig_links = [("sg-holdings", "Holdings and changes"), ("sg-rank", "Asset ranking")]
+                            if eq_details:
+                                _sig_links.append(("sg-equity", "Equity sub-selection"))
+                            ae_md(ae_head(f"As of the {sig_date:%A, %B} {sig_date.day}, {sig_date:%Y} close", "Current Model Signals",
+                                          "What the model would hold if it rebalanced today.", _sig_links))
+
+                            # ---- holdings card ----
+                            _w = signals["weights"]
+                            _held = sorted(signals["final_holdings"], key=lambda t: -_w.get(t, 0))
+                            _wmax = max([_w.get(t, 0) for t in _held] + [1e-9])
+                            _rows = []
+                            for t in _held:
+                                sub = ae_asset_name(t)
+                                if t in signals["selected_equities"]:
+                                    sub = (sub + " · " if sub else "") + "equity pick"
+                                _rows.append(f'<div class="ae-hold"><div><span class="ae-hold-t">{ae_esc(t)}</span>'
+                                             f'<span class="ae-hold-n">{ae_esc(sub)}</span></div>'
+                                             f'<div class="ae-hold-b"><span style="width:{_w.get(t, 0) / _wmax * 100:.1f}%"></span></div>'
+                                             f'<div class="ae-hold-w">{_w.get(t, 0):.1%}</div></div>')
+                            _sz_live = signals.get("sizing_note") or ""
+                            _extra = []
+                            if _sz_live.startswith("Inverse vol (ERC fallback"):
+                                _extra.append(f'<div class="ae-small">This signal uses inverse volatility ({ae_esc(_sz_live[len("Inverse vol ("):])}</div>')
+                            # Current leverage signal
+                            if leverage_params_ui.get("enabled", False):
+                                method = leverage_params_ui.get("method", "holdings_gate")
+                                if method == "constant":
+                                    _extra.append('<div class="ae-row">' + ae_pill(f"Leverage {leverage_params_ui.get('mult_constant', 1.25):.2f}x", "neutral")
+                                                  + '<span class="ae-small">constant</span></div>')
+                                else:
+                                    lev_m, lev_r, lev_d = compute_leverage_signal(daily_prices, sig_date, leverage_params_ui,
+                                                                                  final_holdings=signals["final_holdings"])
+                                    _tone = {"leveraged": "good", "risk-on": "good", "defensive": "warn", "neutral": "warn",
+                                             "risk-off": "bad"}.get(lev_r, "neutral")
+                                    if method == "holdings_gate":
+                                        _det = f"holding {', '.join(lev_d['defensives_held'])}" if lev_d.get("defensives_held") else ""
+                                    else:
+                                        _lt = leverage_params_ui["ticker"]
+                                        _det = (f"{_lt} ${lev_d['price']:.2f}, {'above' if lev_d['price_above_long'] else 'below'} its "
+                                                f"{leverage_params_ui['long_sma']}-day SMA ${lev_d['long_sma']:.2f}; "
+                                                f"{leverage_params_ui['short_sma']}-day SMA {'rising' if lev_d['short_sma_rising'] else 'falling'}"
+                                                if lev_d else "")
+                                    _extra.append('<div class="ae-row">' + ae_pill(f"Leverage {lev_r} ({lev_m:.2f}x)", _tone)
+                                                  + (f'<span class="ae-small">{ae_esc(_det)}</span>' if _det else "") + "</div>")
+                            # Current G1 cash rule signal
+                            if g1_config.get("enabled"):
+                                _g1i = signals.get("g1_info") or {}
+                                _g1s = _g1i.get("status", "no data")
+                                _g1f = g1_config["fund"]
+                                _g1_words = {
+                                    "in": f"in: {_g1i.get('moved', 0.0):.2%} of the portfolio moves from BIL to {_g1f}",
+                                    "no cash": "not a cash month (BIL not held)",
+                                    "yield not down": "out: the yield is not falling",
+                                    "fund below BIL": f"out: {_g1f}'s score is not above BIL's",
+                                    "no data": "no data at this date",
+                                }
+                                _g1_tone = {"in": "good", "yield not down": "bad", "fund below BIL": "bad"}.get(_g1s, "neutral")
+                                _g1_bits = []
+                                if "yield_now" in _g1i:
+                                    _g1_bits.append(f"{g1_config['yield_ticker']} {_g1i['yield_now']:.2f} vs "
+                                                    f"{_g1i['yield_then']:.2f} {g1_config['yield_lookback']} trading days earlier")
+                                if "fund_score" in _g1i:
+                                    _g1_bits.append(f"{_g1f} score {_g1i['fund_score']:.2%} vs BIL {_g1i['bil_score']:.2%}")
+                                _extra.append('<div class="ae-row">' + ae_pill("G1 cash rule " + _g1_words.get(_g1s, _g1s), _g1_tone)
+                                              + (f'<span class="ae-small">{ae_esc(" · ".join(_g1_bits))}</span>' if _g1_bits else "")
+                                              + "</div>")
+                            _hold_card = ('<div class="ae-card"><div class="ae-row" style="justify-content:space-between">'
+                                          '<span class="ae-card-l">Recommended holdings</span>'
+                                          f'<span class="ae-row">{ae_tag(sizing_info["label"])}</span></div>'
+                                          + "".join(_rows) + "".join(_extra) + "</div>")
+
+                            # ---- changes against the previous month-end signal ----
+                            prev_date = signals.get("prev_month_end_date")
+                            prev_holdings = signals.get("prev_holdings", [])
+                            prev_weights = signals.get("prev_weights", {})
+                            if prev_date is not None and prev_holdings:
+                                _p_data = signals.get("prev_data_date")
+                                _p_exec = signals.get("prev_exec_date")
+                                if _p_data is not None and _p_exec is not None:
+                                    _p_title = f"Against the {_p_exec:%A, %B} {_p_exec.day} rebalance"
+                                    _p_label = (f"That rebalance used the {_p_data:%A, %B} {_p_data.day} close, the trading day before "
+                                                f"the trade.")
+                                else:
+                                    _p_title = f"Against the {prev_date:%B} {prev_date.day} month-end signal"
+                                    _p_label = ""
+                                _p_sz = signals.get("prev_sizing_note") or ""
+                                if _p_sz.startswith("Inverse vol (ERC fallback"):
+                                    _p_label += " It used inverse volatility (" + _p_sz[len("Inverse vol ("):]
+                                _chg = []
+                                _n_in = _n_out = 0
+                                for t in sorted(set(prev_weights) | set(_w), key=lambda t: -(_w.get(t, 0) + prev_weights.get(t, 0))):
+                                    a, b = prev_weights.get(t, 0.0), _w.get(t, 0.0)
+                                    if a <= 0 and b <= 0:
+                                        continue
+                                    if a <= 0:
+                                        _n_in += 1
+                                        p, txt = ae_pill("New", "good", "+"), f"{b:.1%}"
+                                    elif b <= 0:
+                                        _n_out += 1
+                                        p, txt = ae_pill("Out", "bad", "−"), f"was {a:.1%}"
+                                    else:
+                                        d = (b - a) * 100
+                                        p, txt = ae_pill(ae_neg(f"{d:+.1f} pts"), "neutral"), f"{a:.1%} to {b:.1%}"
+                                    nm = ae_asset_name(t)
+                                    _chg.append(f'<div class="ae-chg"><span class="ae-hold-t">{ae_esc(t)}</span>'
+                                                f'<span class="ae-small" style="font-size:13.5px">{ae_esc((nm + " · ") if nm else "")}{ae_esc(txt)}</span>{p}</div>')
+                                if _n_in or _n_out:
+                                    _sum = (f"{_n_in} fund{'s' if _n_in != 1 else ''} would rotate in and {_n_out} out "
+                                            "if the month ended today.")
+                                else:
+                                    _sum = "The same funds as the last rebalance; only the weights move."
+                                _chg_card = (f'<div class="ae-card" style="gap:8px"><span class="ae-card-l">{ae_esc(_p_title)}</span>'
+                                             f'<div>{"".join(_chg)}</div><div class="ae-small">{ae_esc(_sum)} {ae_esc(_p_label)}</div></div>')
+                            else:
+                                _chg_card = ('<div class="ae-card"><span class="ae-card-l">Against the last rebalance</span>'
+                                             '<div class="ae-small">No previous month-end signal in this run.</div></div>')
+                            ae_md(f'<div id="sg-holdings" class="ae-anchor ae-grid2">{_hold_card}{_chg_card}</div>')
+
+                            # ---- asset ranking ----
+                            details = signals["asset_details"]
+                            vol_months_label = f"{params['vol_months']}mo Vol (ann)"
+                            lb_cols = sorted(set(params["main_lookbacks"]))
+                            lb_headers = [f"{lb}mo Return" for lb in lb_cols]
+                            _maxabs = max([abs(r.get("Blended Score", 0) or 0) for r in details
+                                           if isinstance(r.get("Blended Score"), (int, float)) and np.isfinite(r.get("Blended Score"))] + [1e-9])
+
+                            def _pc(v):
+                                return ae_neg(f"{v:.2%}") if isinstance(v, (int, float, np.floating)) and np.isfinite(v) else "-"
+
+                            _t = ['<div class="ae-tbl"><table><thead><tr><th>Asset</th>'
+                                  + "".join(f"<th>{lb}-month return</th>" for lb in lb_cols)
+                                  + f'<th>Blended score</th><th>{params["vol_months"]}-month volatility</th><th>Weight</th>'
+                                  '<th class="l">Status</th></tr></thead><tbody>']
+                            for row in details:
+                                name = row["Asset"]
+                                sub = ae_asset_name(name)
+                                tags = ""
+                                if row.get("Equity Pick"):
+                                    tags = " " + ae_tag("equity pick")
+                                elif row.get("G1 Fund"):
+                                    tags = " " + ae_tag("G1 fund")
+                                cells = [f'<td><span class="ae-asset">{ae_esc(name)}</span>'
+                                         f'<span class="ae-asset-n">{ae_esc(sub)}</span>{tags}</td>']
+                                cells += [f"<td>{_pc(row.get(h, np.nan))}</td>" for h in lb_headers]
+                                cells.append(f"<td>{ae_score_bar(row.get('Blended Score', np.nan), _maxabs)}</td>")
+                                cells.append(f'<td style="color:{AE_BODY}">{_pc(row.get(vol_months_label, np.nan))}</td>')
+                                w = row.get("Weight", 0)
+                                cells.append(f'<td style="font-weight:700">{w:.2%}</td>' if w > 0 else "<td>-</td>")
+                                if row.get("Selected"):
+                                    st_html = ae_pill("Held", "good", "✓")
+                                elif row.get("In Basket"):
+                                    st_html = ae_pill("In basket", "neutral")
+                                else:
+                                    st_html = '<span class="ae-small">not in basket</span>'
+                                cells.append(f'<td class="l">{st_html}</td>')
+                                _t.append(('<tr class="ae-held">' if row.get("Selected") else "<tr>") + "".join(cells) + "</tr>")
+                            _t.append("</tbody></table></div>")
+                            ae_md(ae_h3("Asset ranking",
+                                        f"Every eligible fund on the {ae_esc(params.get('main_lookback_label', ''))}. The top "
+                                        f"{params['final_top_n']} by blended score are held, sized by {ae_esc(sizing_info['label'][:1].lower() + sizing_info['label'][1:])}.",
+                                        anchor="sg-rank"))
+                            ae_md("".join(_t))
+
+                            # ---- equity sub-selection ----
+                            if eq_details:
+                                eq_lbs = params["equity_lookbacks"]
+                                eq_desc = f"{eq_lbs[0]}-month" if len(eq_lbs) == 1 else "/".join(str(l) for l in eq_lbs) + "-month blend"
+                                eq_top_n = params["equity_top_n"]
+                                eq_lb_cols = sorted(set(eq_lbs))
+                                _e = ['<div class="ae-tbl"><table><thead><tr><th>Asset</th>'
+                                      + "".join(f"<th>{lb}-month return</th>" for lb in eq_lb_cols)
+                                      + f'<th>Blended score</th><th>{params["vol_months"]}-month volatility</th><th class="l">Status</th>'
+                                      "</tr></thead><tbody>"]
+                                _emax = max([abs(r.get("Blended Score", 0) or 0) for r in eq_details
+                                             if isinstance(r.get("Blended Score"), (int, float)) and np.isfinite(r.get("Blended Score"))] + [1e-9])
+                                for row in eq_details:
+                                    is_pick = row.get("Equity Pick")
+                                    cells = [f'<td><span class="ae-asset">{ae_esc(row["Asset"])}</span>'
+                                             f'<span class="ae-asset-n">{ae_esc(ae_asset_name(row["Asset"]))}</span></td>']
+                                    cells += [f"<td>{_pc(row.get(f'{lb}mo Return', np.nan))}</td>" for lb in eq_lb_cols]
+                                    cells.append(f"<td>{ae_score_bar(row.get('Blended Score', np.nan), _emax)}</td>")
+                                    cells.append(f'<td style="color:{AE_BODY}">{_pc(row.get(vol_months_label, np.nan))}</td>')
+                                    cells.append('<td class="l">' + (ae_pill("Pick", "good", "✓") if is_pick
+                                                                     else ae_pill("Dropped", "bad", "✕")) + "</td>")
+                                    _e.append(('<tr class="ae-held">' if is_pick else "<tr>") + "".join(cells) + "</tr>")
+                                _e.append("</tbody></table></div>")
+                                ae_md(ae_h3("Equity sub-selection",
+                                            f"Equity ETFs ranked by the equity momentum lookback ({eq_desc}). The top {eq_top_n} "
+                                            "advance into the main basket; the rest are dropped before the main-lookback ranking "
+                                            "above. This is why an ETF can rank high above yet still not be an equity pick.",
+                                            anchor="sg-equity"))
+                                ae_md("".join(_e))
+
+                    # =====================================================================
+                    # RETURNS AND DRAWDOWNS
+                    # =====================================================================
+                    with tab_rd:
+                        ae_md(ae_head("Returns and drawdowns", "How deep the losses went, year by year",
+                                      "Hover for values. The buttons switch the view, and a legend click hides or shows a line.",
+                                      [("rd-dd", "Drawdowns"), ("rd-annual", "Annual returns")]))
+                        ae_md(ae_h3("Drawdowns", "How far each portfolio sat below its last high, from daily closes or month-end values.",
+                                    anchor="rd-dd"))
+                        ae_plot(ae_fig_drawdowns(strat_returns, bench_returns, balanced_data, daily_equity, spy_daily_equity, lev_tag),
+                                "Drawdowns", "ae_drawdowns")
+                        _ys, _yb = ae_yearly(strat_returns), ae_yearly(bench_returns).reindex(ae_yearly(strat_returns).index)
+                        _partial = []
+                        if _p0.month != 1:
+                            _partial.append(f"{_p0.year} starts in {_p0:%B}")
+                        if _p1.month != 12:
+                            _partial.append(f"{_p1.year} runs through {_p1:%B}")
+                        _spy = "S&P 500" + lev_tag
+                        _pills = (ae_pill(f"Down years: {int((_ys < 0).sum())} against {int((_yb < 0).sum())} for the {_spy}",
+                                          "good" if (_ys < 0).sum() <= (_yb < 0).sum() else "bad")
+                                  + ae_pill(f"Ahead of the {_spy} in {int((_ys > _yb).sum())} of {len(_ys)} years", "neutral")
+                                  + ae_pill(ae_neg(f"Worst year {_ys.min():.1%} against {_yb.min():.1%}"),
+                                            "good" if _ys.min() >= _yb.min() else "bad"))
+                        ae_md(ae_h3("Annual returns",
+                                    "Calendar-year returns. The 60/40 is one legend click away."
+                                    + (" " + ae_esc("; ".join(_partial)) + "." if _partial else ""), _pills, anchor="rd-annual"))
+                        ae_plot(ae_fig_annual(strat_returns, bench_returns, balanced_data, lev_tag), "Annual Returns", "ae_annual")
+
+                    # =====================================================================
+                    # STRATEGY HEALTH
+                    # =====================================================================
+                    with tab_hl:
+                        ae_md(ae_head("Strategy Health", "Is the edge holding up?",
+                                      "Rolling diagnostics show whether performance is holding up or fading. Windows are 36 months "
+                                      "unless a chart says otherwise. Hover any chart for its values.",
+                                      [("hl-sortino", "Sortino"), ("hl-calmar", "Calmar"), ("hl-cagr", "Return"),
+                                       ("hl-hit", "Hit rate"), ("hl-uw", "Time underwater"), ("hl-excess", "Excess return")]))
+                        _spy_n = "S&P 500" + lev_tag
+
+                        def _last(s):
+                            s = s.dropna()
+                            return float(s.iloc[-1]) if len(s) else np.nan
+
+                        _rs36 = compute_rolling_sortino(strat_returns, 36, rf_monthly)
+                        _rs24 = compute_rolling_sortino(strat_returns, 24, rf_monthly)
+                        _rb36 = compute_rolling_sortino(bench_returns, 36, rf_monthly)
+                        _de_s = daily_equity if len(daily_equity) > 0 else None
+                        _de_b = spy_daily_equity if len(spy_daily_equity) > 0 else None
+                        _rc60 = compute_rolling_calmar(strat_returns, _de_s, 60)
+                        _rc36 = compute_rolling_calmar(strat_returns, _de_s, 36)
+                        _rcb60 = compute_rolling_calmar(bench_returns, _de_b, 60)
+                        _rg_s = compute_rolling_cagr(strat_returns, 36)
+                        _rg_b = compute_rolling_cagr(bench_returns, 36)
+                        _hr_s = compute_rolling_hit_rate(strat_returns, 36)
+                        _hr_b = compute_rolling_hit_rate(bench_returns, 36)
+                        _dd_s, _uw_s = compute_underwater(strat_returns)
+                        _dd_b, _uw_b = compute_underwater(bench_returns)
+                        _ex = (_rg_s - _rg_b).dropna()
+
+                        def _r2(v):
+                            return ae_neg(f"{v:.2f}") if np.isfinite(v) else "N/A"
+
+                        _cards = [
+                            ("hl_sortino", "hl-sortino", "Rolling Sortino ratio",
+                             "Above the dotted line at 1, the return has paid well for the losing months.",
+                             ae_now(f"Now {_r2(_last(_rs36))}") + ae_tag(f"{_spy_n} {_r2(_last(_rb36))}"),
+                             ae_fig_lines([("Strategy, 36 mo", _rs36, BRAND_PURPLE, 2.2, None),
+                                           ("Strategy, 24 mo", _rs24, BRAND_PURPLE_FADE, 1.1, None),
+                                           (f"{_spy_n}, 36 mo", _rb36, BRAND_INDIGO, 1.7, "dash")], yfmt=".2f", ref=1.0, tickfmt="~g")),
+                            ("hl_calmar", "hl-calmar", "Rolling Calmar ratio",
+                             "Return over the worst daily drawdown in the window; 60 months sees a real drawdown more often. "
+                             "The axis stops at 5; hover shows the full value.",
+                             ae_now(f"Now {_r2(_last(_rc60))}") + ae_tag(f"{_spy_n} {_r2(_last(_rcb60))}"),
+                             ae_fig_lines([("Strategy, 60 mo", _rc60, BRAND_PURPLE, 2.2, None),
+                                           ("Strategy, 36 mo", _rc36, BRAND_PURPLE_FADE, 1.1, None),
+                                           (f"{_spy_n}, 60 mo", _rcb60, BRAND_INDIGO, 1.7, "dash")], yfmt=".2f", ref=1.0, yrange=[0, 5],
+                                          tickfmt="~g")),
+                            ("hl_cagr", "hl-cagr", "Rolling 36-month return",
+                             "The annual growth rate over each trailing three years.",
+                             ae_now(f"Now {_ae_pct(_last(_rg_s))}") + ae_tag(f"{_spy_n} {_ae_pct(_last(_rg_b))}"),
+                             ae_fig_lines([("Strategy", _rg_s, BRAND_PURPLE, 2.2, None),
+                                           (_spy_n, _rg_b, BRAND_INDIGO, 1.7, "dash")], yfmt=".0%")),
+                            ("hl_hit", "hl-hit", "Rolling hit rate",
+                             "The share of positive months in each trailing three years. The dotted line is 50%.",
+                             ae_now(f"Now {_last(_hr_s):.0%}") + ae_tag(f"{_spy_n} {_last(_hr_b):.0%}"),
+                             ae_fig_lines([("Strategy", _hr_s, BRAND_PURPLE, 2.2, None),
+                                           (_spy_n, _hr_b, BRAND_INDIGO, 1.7, "dash")], yfmt=".0%", ref=0.5, yrange=[0.3, 1.0])),
+                            ("hl_uw", "hl-uw", "Time underwater",
+                             "Months since the last month-end high. The depth of each drawdown is on Returns and Drawdowns.",
+                             ae_now(f"Longest {int(_uw_s.max())} months") + ae_tag(f"{_spy_n} longest {int(_uw_b.max())} months"),
+                             ae_fig_underwater(_uw_s, _uw_b, lev_tag)),
+                            ("hl_excess", "hl-excess", "Rolling 36-month excess return",
+                             f"The strategy's 36-month return minus the {_spy_n}'s. Green when ahead.",
+                             ae_now(ae_neg(f"Now {_last(_ex) * 100:+.1f} pts")) + ae_tag(f"Ahead in {(_ex > 0).mean():.0%} of windows")
+                             if len(_ex) else "",
+                             ae_fig_lines([("Strategy minus " + _spy_n, _ex, AE_INK, 1.3, None)], yfmt=".0%",
+                                          fills=[(_ex.clip(lower=0), "rgba(31,138,76,0.22)"), (_ex.clip(upper=0), "rgba(184,67,47,0.22)")])),
+                        ]
+                        for _i in range(0, len(_cards), 2):
+                            _cols = st.columns(2, gap="medium")
+                            for _col, (_key, _anchor, _title, _how, _chips, _fig) in zip(_cols, _cards[_i:_i + 2]):
+                                with _col:
+                                    with st.container(border=True, key=f"aecard_{_key}"):
+                                        ae_md(f'<div class="ae-chart-h" id="{_anchor}"><div class="ae-chart-t">{ae_esc(_title)}</div>'
+                                              f'<div class="ae-small">{ae_esc(_how)}</div><div class="ae-row">{_chips}</div></div>')
+                                        ae_plot(_fig, _title, f"ae_{_key}")
+                        # Leverage timeline (only shown when dynamic leverage is on)
+                        _lev_fig, _lev_title = ae_fig_leverage(trade_df, leverage_params_ui)
+                        if _lev_fig is not None:
+                            ae_md(ae_h3(_lev_title, "The leverage multiplier held each month."))
+                            ae_plot(_lev_fig, "Dynamic Leverage", "ae_leverage")
+
+                    # =====================================================================
+                    # TRADES AND DATA
+                    # =====================================================================
+                    with tab_td:
+                        ae_md(ae_head("Trades and data", "Every rebalance, and where the data comes from",
+                                      "The trade log, downloads, this run's settings, the notes on each fund's history and the last few runs.",
+                                      [("td-log", "Trade log"), ("td-dl", "Downloads"), ("td-settings", "Settings"),
+                                       ("td-data", "Data notes"), ("td-prev", "Previous results")]))
+
+                        # ---- TRADE LOG ----
+                        trade_df_display = trade_df.iloc[::-1].reset_index(drop=True)
+                        ae_md(ae_h3("Trade log",
+                                    "Most recent first. Each chip is a holding, its weight and its return that month. "
+                                    f"The sizing column says how each month was weighted ({ae_esc(sizing_info['label'])} in this run).",
+                                    anchor="td-log"))
+                        _has_lev = leverage_params_ui.get("enabled", False) and "leverage" in trade_df_display.columns
+                        _th = ('<div class="ae-tbl"><table><thead><tr><th>Month held</th><th class="l">Holdings, weight and return</th>'
+                               '<th>Return</th><th>Turnover</th><th>Cost</th>' + ("<th>Leverage</th>" if _has_lev else "")
+                               + '<th class="l">Sizing</th></tr></thead><tbody>')
+                        _tr = []
+                        for _, _r in trade_df_display.head(6).iterrows():
+                            _ret = str(_r.get("portfolio_return", ""))
+                            try:
+                                _hm = pd.Timestamp(str(_r.get("hold_month")) + "-01")
+                                _hm_txt = f"{_hm:%b %Y}"
+                            except Exception:
+                                _hm_txt = str(_r.get("hold_month", ""))
+                            try:
+                                _ent = pd.Timestamp(_r.get("exec_entry"))
+                                _ent_txt = f"traded {_ent:%b} {_ent.day}"
+                            except Exception:
+                                _ent_txt = ""
+                            _tr.append(f'<tr><td class="l ae-nw"><div style="font-weight:600">{ae_esc(_hm_txt)}</div>'
+                                       f'<div class="ae-small">{ae_esc(_ent_txt)}</div></td>'
+                                       f'<td class="l">{ae_holding_chips(_r.get("final_holdings", ""))}</td>'
+                                       f'<td>{ae_pill(ae_neg(_ret), "bad" if _ret.startswith("-") else "good")}</td>'
+                                       f'<td style="color:{AE_BODY}">{ae_esc(_r.get("turnover", ""))}</td>'
+                                       f'<td style="color:{AE_BODY}">{ae_esc(_r.get("trading_cost", ""))}</td>'
+                                       + (f'<td>{ae_esc(_r.get("leverage", ""))}</td>' if _has_lev else "")
+                                       + f'<td class="l ae-small">{ae_esc(_r.get("sizing", ""))}</td></tr>')
+                        ae_md(_th + "".join(_tr) + "</tbody></table></div>")
+                        with st.expander(f"Full trade log, all {len(trade_df_display)} months"):
+                            st.dataframe(trade_df_display, width="stretch", hide_index=True)
+
+                        # ---- DOWNLOADS ----
+                        ae_md(ae_h3("Downloads", anchor="td-dl"))
+                        col_dl1, col_dl2 = st.columns(2)
+                        with col_dl1:
+                            st.download_button(
+                                "Download Trade Log (CSV)",
+                                data=trade_df.to_csv(index=False),
+                                file_name=f"Trade Log ({sizing_info['file_tag']}).csv",
+                                mime="text/csv",
+                                width="stretch",
+                                on_click="ignore",
+                            )
+                        with col_dl2:
+                            export_df = pd.DataFrame({
+                                "date": strat_returns.index,
+                                "strategy_return": strat_returns.values,
+                                "benchmark_return": bench_returns.values,
+                            })
+                            export_df["strategy_cumulative"] = INITIAL_CAPITAL * (1 + export_df["strategy_return"]).cumprod()
+                            export_df["benchmark_cumulative"] = INITIAL_CAPITAL * (1 + export_df["benchmark_return"]).cumprod()
+                            export_df["position_sizing"] = sizing_info["label"]
+                            st.download_button(
+                                "Download Monthly Returns (CSV)",
+                                data=export_df.to_csv(index=False),
+                                file_name=f"Monthly Returns ({sizing_info['file_tag']}).csv",
+                                mime="text/csv",
+                                width="stretch",
+                                on_click="ignore",
+                            )
+
+                        # ---- SETTINGS FOR THIS RUN ----
+                        _set = [("Fixed basket", ", ".join(selected_fixed) if selected_fixed else "None"),
+                                ("Equity selection", f"Top {equity_top_n} from {', '.join(selected_equity)}" if equity_top_n > 0 else "None"),
+                                ("Final", f"Top {final_top_n} by {main_lookback_label}, {sizing_info['final']}"),
+                                ("Trade day", exec_timing_label),
+                                ("Trading cost", f"{cost_per_side:.2%} per side" if cost_per_side > 0 else "None (gross)"),
+                                ("Period", f"{_p0:%Y-%m} to {_p1:%Y-%m}")]
+                        if leverage_params_ui.get("enabled", False):
+                            lp = leverage_params_ui
+                            if lp.get("method") == "constant":
+                                cost_pct = lp.get("leverage_cost_annual", 0.0) * 100
+                                _set.append(("Leverage", f"Constant {lp.get('mult_constant', 1.25):.2f}x"
+                                             + (f", cost {cost_pct:.1f}%" if cost_pct > 0 else "")))
+                            elif lp.get("method") == "holdings_gate":
+                                cost_pct = lp.get("leverage_cost_annual", 0.0) * 100
+                                _set.append(("Leverage", f"Holdings gate ({', '.join(lp.get('defensive_tickers', []))}), "
+                                             f"{lp.get('mult_leveraged', 1.25):.2f}x when clear"
+                                             + (f", cost {cost_pct:.1f}%" if cost_pct > 0 else "")))
+                            elif lp.get("method") == "vt_trend":
+                                _set.append(("Leverage", f"{lp['ticker']} {lp['long_sma']}/{lp['short_sma']}d SMA, "
+                                             f"on={lp['mult_risk_on']:.2f}x / off={lp['mult_risk_off']:.2f}x"))
+                        if g1_config.get("enabled"):
+                            _set.append(("G1 cash rule", g1_label(g1_config)))
+                        if backfill_rules:
+                            _set.append(("Backfills", "; ".join(f"{k} <- {', '.join(v)}" for k, v in backfill_rules.items())))
+                        ae_md(ae_h3("Settings for this run", anchor="td-settings"))
+                        ae_md('<div class="ae-set">' + "".join(
+                            ('<div class="ae-wide">' if k == "Backfills" else "<div>")
+                            + f'<span class="ae-set-k">{ae_esc(k)}</span><span class="ae-set-v">{ae_esc(v)}</span></div>'
+                            for k, v in _set) + "</div>")
+
+                        # ---- BACKFILL DETAILS & DATA ADJUSTMENTS ----
+                        ae_md(ae_h3("Data notes", "Which source covers which dates, and why some histories are stand-ins or repaired.",
+                                    anchor="td-data"))
+                        if backfill_info:
+                            with st.expander("Backfill details (which ticker covers which dates)"):
+                                st.dataframe(pd.DataFrame(backfill_info), width="stretch", hide_index=True)
+                        _run_assets = list(dict.fromkeys(
+                            list(selected_fixed)
+                            + (list(selected_equity) if equity_top_n > 0 else [])
+                            + [c["ticker"] for c in BAL_BENCHMARKS]
+                            + ([g1_config["fund"]] if g1_config.get("enabled") else [])
+                        ))
+                        _adj_assets = [t for t in _run_assets if t in DATA_ADJUSTMENT_NOTES]
+                        if _adj_assets:
+                            _default_chains = {
+                                p.strip().upper(): [x.strip().upper() for x in c.split(",") if x.strip()]
+                                for p, c in BACKFILL_DEFAULTS if p.strip()
+                            }
+                            # The G1 fund's default chain lives in G1_DEFAULTS.
+                            _default_chains.setdefault(G1_DEFAULTS["fund"], list(G1_DEFAULTS["backfill"]))
+                            with st.expander("Data adjustments (why some histories are stand-ins or repaired)"):
+                                st.caption(
+                                    "The table above shows which source covers which dates; these notes say why. "
+                                    "They describe the default rules."
+                                )
+                                for _t in _adj_assets:
+                                    _note = DATA_ADJUSTMENT_NOTES[_t]
+                                    if _t in _default_chains and backfill_rules.get(_t) != _default_chains[_t]:
+                                        _used = ", ".join(backfill_rules.get(_t, [])) or "none"
+                                        _note += (
+                                            f" *This run's backfill rule for {_t} is not the default "
+                                            f"({_used}), so the table above, not this note, describes it.*"
+                                        )
+                                    st.markdown(f"**{_t}.** {_note}")
+                                st.caption(
+                                    "The full record, with how each stand-in was checked against its real fund and "
+                                    "when each change was made: Data Adjustments.md in the Backtest Engine project folder."
+                                )
+
+                        # ---- PREVIOUS RESULTS (the log this run was just added to) ----
+                        ae_md(ae_h3("Previous backtest results", f"The latest runs in {ae_esc(os.path.basename(RESULTS_FILE))}, "
+                                    "newest first, this run included.", anchor="td-prev"))
+                        try:
+                            _log = pd.read_excel(RESULTS_FILE, engine="openpyxl")
+                            _lg = _log.iloc[::-1].head(6)
+                            _lc = [c for c in ("Timestamp", "Period", "Main Lookback", "Final Top N",
+                                               "Sortino", "CAGR", "Max DD (Daily)", "Martin") if c in _lg.columns]
+
+                            def _lv(c, v):
+                                if c == "Timestamp":
+                                    try:
+                                        _ts = pd.Timestamp(v)
+                                        return (f"{_ts:%b} {_ts.day}, {_ts:%Y}, {_ts.hour % 12 or 12}:{_ts:%M} "
+                                                f"{'a.m.' if _ts.hour < 12 else 'p.m.'}")
+                                    except Exception:
+                                        return str(v)
+                                if c in ("CAGR", "Max DD (Daily)") and isinstance(v, (int, float, np.floating)) and np.isfinite(v):
+                                    return ae_neg(f"{v:.1%}")
+                                if c in ("Sortino", "Martin") and isinstance(v, (int, float, np.floating)) and np.isfinite(v):
+                                    return f"{v:.2f}"
+                                return "" if (isinstance(v, float) and np.isnan(v)) else str(v)
+
+                            _num = {"Sortino", "CAGR", "Max DD (Daily)", "Martin"}
+                            _hn = {"Final Top N": "Holdings", "Max DD (Daily)": "Max DD, daily"}
+                            _h = "".join(("<th>" if c in _num else '<th class="l">') + ae_esc(_hn.get(c, c)) + "</th>" for c in _lc)
+                            _sort_style = f' style="font-weight:700;color:{BRAND_PURPLE}"'
+
+                            def _lcell(c, v):
+                                cls = ' class="ae-nw"' if c in _num else ' class="l ae-nw"'
+                                sty = _sort_style if c == "Sortino" else ""
+                                return f"<td{cls}{sty}>{ae_esc(_lv(c, v))}</td>"
+
+                            _b = "".join("<tr>" + "".join(_lcell(c, r[c]) for c in _lc) + "</tr>" for _, r in _lg.iterrows())
+                            ae_md(f'<div class="ae-tbl"><table><thead><tr>{_h}</tr></thead><tbody>{_b}</tbody></table></div>')
+                            with st.expander(f"All {len(_log)} logged runs"):
+                                st.dataframe(_log, width="stretch", hide_index=True)
+                        except Exception as _log_exc:
+                            st.caption(f"Could not read the results log: {_log_exc}")
+
+                    # =====================================================================
+                    # REALITY CHECK (runs last; then Overview's tiles get its ranges)
+                    # =====================================================================
+                    with tab_rc:
+                        if rc_mode != "off":
+                            try:
+                                _rc_A, _rc_stats = rc_show_panel(daily_prices, monthly_prices, params, results_df,
+                                                                 daily_equity, strat_metrics, rc_mode, rc_extras, basket_b)
+                                _ov_tiles.markdown(_ae_tiles_html(_rc_A.get("tiles"), ""), unsafe_allow_html=True)
+                            except Exception as _rc_exc:
+                                st.warning(f"The Reality Check could not run: {_rc_exc}")
+                                _ov_tiles.markdown(_ae_tiles_html(None, "The Reality Check could not run this time."),
+                                                   unsafe_allow_html=True)
+                        else:
+                            ae_md(ae_head("Reality Check", "Off for this run",
+                                          "Turn it on in the sidebar under <b>Reality Check</b> to repeat the backtest on the settings "
+                                          "one step away and see how much of the result survives."))
 
 else:
     st.info("Configure parameters in the sidebar, then click **Run Backtest** to see results.")

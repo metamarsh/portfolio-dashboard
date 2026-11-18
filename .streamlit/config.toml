@@ -1,0 +1,18 @@
+# Backtest Engine theme (page facelift, November 17, 2026).
+# The same theme as the Chart Dashboard's .streamlit/config.toml, which follows
+# the asymmetricedge.io homepage: Inter for body and interface text, IBM Plex
+# Serif 600 for headings, the warm neutral set and the brand purple accent.
+# The AE_* tokens at the top of Adaptive Portfolio Dashboard.py mirror these
+# colors; change both together.
+
+[theme]
+base = "light"
+primaryColor = "#3A0CA3"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F4F0"
+textColor = "#1C1B19"
+linkColor = "#3A0CA3"
+borderColor = "#D9D5CC"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "'IBM Plex Serif':https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@600&display=swap, serif"
+headingFontWeights = [600, 600, 600, 600, 600, 600]
