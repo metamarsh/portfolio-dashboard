@@ -227,6 +227,9 @@ st.markdown("""
     .ae-tbl td .ae-tag { font-size: 11.5px; padding: 1px 7px; margin-left: 6px; }
     .ae-tbl td.ae-nw, .ae-tbl th.ae-nw { white-space: nowrap; }
     .ae-tbl .ae-asset-n { color: #55524D; font-size: 12.5px; margin-left: 6px; }
+    .ae-tbl.ae-tbl-fit thead th { white-space: normal; min-width: 4.5em; vertical-align: bottom; }
+    .ae-tbl.ae-tbl-fit .ae-score-b { width: 64px; }
+    .ae-tbl.ae-tbl-fit tbody td.l { white-space: nowrap; }
     .ae-tip { position: relative; cursor: help; display: inline-flex; align-items: center; }
     .ae-tip-i { display: inline-block; width: 15px; height: 15px; line-height: 15px; margin-left: 7px; border-radius: 50%; border: 1px solid #A99FCB; color: #3A0CA3; font-size: 10px; font-weight: 700; font-style: italic; text-align: center; }
     .ae-tip-box { visibility: hidden; opacity: 0; position: absolute; left: 0; top: 135%; z-index: 1000; width: 300px; padding: 10px 12px; background: #1C1B19; color: #ffffff; font-size: 12.5px; font-weight: 400; line-height: 1.45; text-align: left; white-space: normal; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.18); transition: opacity 0.12s; }
@@ -3775,13 +3778,25 @@ def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
             v = INITIAL_CAPITAL * w
             n_years = max((len(w) - 1) / 12.0, 1e-9)
             cagr = (v.iloc[-1] / INITIAL_CAPITAL) ** (1 / n_years) - 1
-            sub = f"${v.iloc[-1]:,.0f} · {ae_neg(f'{cagr:.1%}')} a year"
+            sub = f"${v.iloc[-1]:,.0f} · {ae_neg(f'{cagr:.1%}')}"
+            grp = f"{name}|{p_i}"
+            label = f"<b>{ae_esc(name)}</b>" if rank == 0 else ae_esc(name)
             lo_all, hi_all = min(lo_all, float(v.min())), max(hi_all, float(v.max()))
             fig.add_trace(go.Scatter(
                 x=v.index, y=v.values, mode="lines", line=dict(color=color, width=width, dash=dash),
-                legendrank=rank + 1,
-                name=f"<b>{ae_esc(name)}</b><br><span style='font-size:12px;color:{AE_BODY}'>{sub}</span>",
+                name=ae_esc(name), legendgroup=grp, showlegend=False,
                 hovertemplate=f"{ae_esc(name)}: %{{y:$,.0f}}<extra></extra>", visible=(p_i == 0),
+            ))
+            vis_all.append(p_i)
+            # Legend-only twin: Plotly draws a line segment for a line trace, so a
+            # point-free marker trace in the same group supplies the square swatch
+            # (matching the Performance Summary header) and a click still hides the line.
+            fig.add_trace(go.Scatter(
+                x=[None], y=[None], mode="markers",
+                marker=dict(symbol="square", size=10, color=color, line=dict(width=0)),
+                legendrank=rank + 1, legendgroup=grp, hoverinfo="skip",
+                name=f"{label}<br><span style='font-size:12px;color:{AE_BODY}'>{sub}</span>",
+                visible=(p_i == 0),
             ))
             vis_all.append(p_i)
     args = [[{"visible": [v == p_i for v in vis_all]}, {"xaxis.autorange": True, "yaxis.autorange": True}]
@@ -3801,7 +3816,7 @@ def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
     fig.update_yaxes(tickvals=ticks, ticktext=[_usd(t) for t in ticks])
     if len(periods) > 1:
         fig.update_layout(updatemenus=ae_buttons([p[0] for p in periods], args))
-    fig.update_layout(legend=dict(y=-0.1))
+    fig.update_layout(legend=dict(y=-0.1, valign="top", itemsizing="constant", groupclick="togglegroup"))
     return fig
 
 
@@ -6876,6 +6891,8 @@ if run_button:
                                     "the buttons change the period and a legend click hides a line.", anchor="ov-growth"))
                         ae_plot(ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag), f"Growth of ${INITIAL_CAPITAL:,}",
                                 "ae_growth")
+                        ae_md('<p style="text-align:center;font-size:12px;color:#8A8680;margin:-0.75rem 0 1rem;">'
+                              "Ending value &middot; yearly return, for the period selected</p>")
 
                         # ---- PERFORMANCE SUMMARY ----
                         def fmt_pct(v):
@@ -7134,7 +7151,7 @@ if run_button:
                             def _pc(v):
                                 return ae_neg(f"{v:.2%}") if isinstance(v, (int, float, np.floating)) and np.isfinite(v) else "-"
 
-                            _t = ['<div class="ae-tbl"><table><thead><tr><th>Asset</th>'
+                            _t = ['<div class="ae-tbl ae-tbl-fit"><table><thead><tr><th>Asset</th>'
                                   + "".join(f"<th>{lb}-month return</th>" for lb in lb_cols)
                                   + f'<th>Blended score</th><th>{params["vol_months"]}-month volatility</th><th>Weight</th>'
                                   '<th class="l">Status</th></tr></thead><tbody>']
@@ -7174,7 +7191,7 @@ if run_button:
                                 eq_desc = f"{eq_lbs[0]}-month" if len(eq_lbs) == 1 else "/".join(str(l) for l in eq_lbs) + "-month blend"
                                 eq_top_n = params["equity_top_n"]
                                 eq_lb_cols = sorted(set(eq_lbs))
-                                _e = ['<div class="ae-tbl"><table><thead><tr><th>Asset</th>'
+                                _e = ['<div class="ae-tbl ae-tbl-fit"><table><thead><tr><th>Asset</th>'
                                       + "".join(f"<th>{lb}-month return</th>" for lb in eq_lb_cols)
                                       + f'<th>Blended score</th><th>{params["vol_months"]}-month volatility</th><th class="l">Status</th>'
                                       "</tr></thead><tbody>"]
