@@ -147,12 +147,25 @@ st.markdown("""
     /* Button labels keep the button's own color (the rule above would turn them ink) */
     button [data-testid="stMarkdownContainer"], button [data-testid="stMarkdownContainer"] p { color: inherit; }
 
-    /* Results tabs: the Chart Dashboard's menu bar, held at the top while a tab scrolls.
-       Selected by role, which both Streamlit's newer tabs and the older BaseWeb ones carry. */
+    /* Results tabs: separated, outlined buttons (the look of the chart period buttons), the bar
+       held at the top while a tab scrolls. Selected by role, which both Streamlit's newer tabs and
+       the older BaseWeb ones carry. The selected tab is marked by its purple outline and tint, so
+       the underline each Streamlit build draws is hidden: BaseWeb's highlight and border elements,
+       the newer build's indicator inside each tab, and the rule under the newer build's bar. */
     [data-testid="stTabs"] [role="tablist"] {
         position: sticky; top: 3.75rem; z-index: 60; background: #ffffff; gap: 10px;
-        padding-top: 4px;
+        padding: 6px 0 10px 0;
     }
+    [data-testid="stTabs"] [role="tablist"]::after,
+    [data-testid="stTabs"] [data-baseweb="tab-highlight"],
+    [data-testid="stTabs"] [data-baseweb="tab-border"],
+    [data-testid="stTabs"] [role="tab"] .react-aria-SelectionIndicator { display: none !important; }
+    [data-testid="stTabs"] [role="tab"] {
+        height: auto; padding: 8px 16px; background: #ffffff;
+        border: 1px solid #D9D5CC; border-radius: 8px;
+    }
+    [data-testid="stTabs"] [role="tab"]:hover { border-color: #3A0CA3; background: #FAF9FD; }
+    [data-testid="stTabs"] [role="tab"][aria-selected="true"] { border-color: #3A0CA3; background: #F0EDF8; }
     [data-testid="stTabs"] [role="tab"] p { font-size: 15px; font-weight: 500; color: #55524D; }
     [data-testid="stTabs"] [role="tab"]:hover p { color: #3A0CA3; }
     [data-testid="stTabs"] [role="tab"][aria-selected="true"] p { font-weight: 600; color: #3A0CA3; }
@@ -3796,8 +3809,47 @@ def ae_drawdown(w):
     return w / w.cummax() - 1
 
 
+# The drawdown chart's lines look like the Chart Dashboard's Drawdowns Over Time chart (app.py DD_LINE, DD_DASH,
+# DD_WIDTH, DD_TEXT). Each entry: line color, dash, width, label color.
+AE_DD_LOOK = {
+    "Strategy": ("#3A0CA3", None, 2.4, "#3A0CA3"),
+    "80/20": ("#4361EE", "7px,4px", 2.0, "#3451D1"),
+    "60/40": ("#4CC9F0", "3px,4px", 2.6, "#0B7AA3"),
+    "S&P 500": ("#6B7280", "11px,4px,3px,4px", 2.0, "#4B5563"),
+}
+# The strategy's fill is lightest at 0% and darkest at its deepest point (gradient stop 0 is the lowest value).
+AE_DD_FILL = [[0.0, "rgba(58,12,163,0.26)"], [1.0, "rgba(58,12,163,0.04)"]]
+
+
+def ae_dd_look(name, color):
+    for key, look in AE_DD_LOOK.items():
+        if name.startswith(key):
+            return look
+    return color, None, 1.6, color
+
+
+def ae_dd_worst_labels(worst, x_lo, x_hi, plot_h=250.0, gap_px=34.0):
+    """Where each worst-point label sits (the Chart Dashboard's rule). A label starts level with its dot and moves
+    down when the label above it is close in time and less than gap_px higher. worst: dicts with v (depth,
+    negative) and t (date); each gets frac (position across the chart) and ly (label height)."""
+    if not worst:
+        return worst
+    ppu = plot_h / (1.1 * max(0.05, -min(w["v"] for w in worst)))   # pixels per 100% of drawdown
+    span = max(1.0, (x_hi - x_lo).total_seconds())
+    prev = None
+    for w in sorted(worst, key=lambda w: -w["v"]):
+        w["frac"] = (w["t"] - x_lo).total_seconds() / span
+        w["ly"] = w["v"]
+        if prev is not None and abs(w["frac"] - prev["frac"]) < 0.09 and (prev["ly"] - w["ly"]) * ppu < gap_px:
+            w["ly"] = prev["ly"] - gap_px / ppu
+        prev = w
+    return worst
+
+
 def ae_fig_drawdowns(strat_returns, bench_returns, balanced_data, daily_equity, spy_daily_equity, lev_tag=""):
-    """Drawdowns from the last high, daily (default) or month-end, switched by Plotly buttons."""
+    """Drawdowns from the last high, daily (default) or month-end, switched by Plotly buttons. The strategy is a
+    solid purple line over a fill that deepens with depth, the benchmarks are dashed, and each portfolio's
+    worst point is a ringed dot with its depth and date."""
     sets = ae_series_set(strat_returns, bench_returns, balanced_data, lev_tag)
     daily = {}
     if daily_equity is not None and len(daily_equity):
@@ -3812,6 +3864,7 @@ def ae_fig_drawdowns(strat_returns, bench_returns, balanced_data, daily_equity, 
     fig = go.Figure()
     tags = []
     for m in modes:
+        worst, x_lo, x_hi = [], None, None
         for rank, (name, r, color, width, dash) in reversed(list(enumerate(sets))):
             if m == "daily":
                 if name not in daily:
@@ -3821,17 +3874,43 @@ def ae_fig_drawdowns(strat_returns, bench_returns, balanced_data, daily_equity, 
                 rr = r.dropna()
                 w = pd.concat([pd.Series([1.0], index=[rr.index[0] - pd.offsets.MonthEnd(1)]), (1 + rr).cumprod()])
                 dd = ae_drawdown(w)
-            strat = name == "Strategy"
+            look_color, look_dash, look_width, look_text = ae_dd_look(name, color)
+            fill = (dict(fill="tozeroy", fillgradient=dict(type="vertical", colorscale=AE_DD_FILL))
+                    if name == "Strategy" else {})
             fig.add_trace(go.Scatter(
-                x=dd.index, y=dd.values, mode="lines", line=dict(color=color, width=2.2 if strat else 1.4),
-                legendrank=rank + 1,
-                fill="tozeroy" if strat else None, fillcolor="rgba(58,12,163,0.10)" if strat else None,
+                x=dd.index, y=dd.values, mode="lines", line=dict(color=look_color, width=look_width, dash=look_dash),
+                legendrank=rank + 1, legendgroup=name, **fill,
                 name=f"<b>{ae_esc(name)}</b><br><span style='font-size:12px;color:{AE_BODY}'>worst {ae_neg(f'{dd.min():.1%}')}</span>",
                 hovertemplate=f"{ae_esc(name)}: %{{y:.1%}}<extra></extra>", visible=(m == modes[0]),
             ))
             tags.append(m)
+            x_lo = dd.index[0] if x_lo is None else min(x_lo, dd.index[0])
+            x_hi = dd.index[-1] if x_hi is None else max(x_hi, dd.index[-1])
+            if np.isfinite(dd.min()) and dd.min() < -0.0005:
+                worst.append(dict(name=name, v=float(dd.min()), t=pd.Timestamp(dd.idxmin()),
+                                  color=look_color, text=look_text))
+        # Each portfolio's worst point: a ringed dot, with its depth and date beside it. The dot and label share
+        # the line's legend group, so a legend click hides or shows all three together.
+        for w in ae_dd_worst_labels(worst, x_lo, x_hi):
+            v, t = w["v"], w["t"]
+            label = (f"<b>{ae_neg(f'{v:.1%}')}</b><br>"
+                     f"<span style='font-size:11px;color:{AE_AXIS}'>{t:%b} {t.day}, {t.year}</span>")
+            fig.add_trace(go.Scatter(
+                x=[t], y=[v], mode="markers", legendgroup=w["name"], showlegend=False, hoverinfo="skip",
+                marker=dict(size=10, color=w["color"], line=dict(color="#ffffff", width=2)), visible=(m == modes[0]),
+            ))
+            tags.append(m)
+            fig.add_trace(go.Scatter(
+                x=[t], y=[w["ly"]], mode="markers+text", legendgroup=w["name"], showlegend=False, hoverinfo="skip",
+                marker=dict(size=14, color="rgba(255,255,255,0)"), text=[label],
+                textposition="middle left" if w["frac"] > 0.86 else "middle right",
+                textfont=dict(size=12.5, color=w["text"]), cliponaxis=False, visible=(m == modes[0]),
+            ))
+            tags.append(m)
     ae_layout(fig, height=380, yfmt=".0%", xhover="%b %d, %Y" if modes[0] == "daily" else "%b %Y",
               top=46 if len(modes) > 1 else 12)
+    fig.update_yaxes(zeroline=True, zerolinecolor=AE_CONTROL, zerolinewidth=1)
+    fig.update_layout(legend=dict(itemwidth=44))
     if len(modes) > 1:
         args = [[{"visible": [t == m for t in tags]}, {"xaxis.hoverformat": "%b %d, %Y" if m == "daily" else "%b %Y"}]
                 for m in modes]
@@ -4607,6 +4686,7 @@ def rc_analyze(params, plan, runs, tested, rf_monthly=None, mild=RC_MILD, spike=
         m = med([ws(s) for s in wide_have]) if has_wide else np.nan
         time_rows.append({"label": label, "tested": _rc_f2(t), "near": _rc_f2(n),
                           "typical": _rc_f2(m) if has_wide else "Full check",
+                          "range": span(n, m, _rc_f1),
                           "pill": _rc_gap_pill(t - n, _rc_level_rel(t, n, mild, spike))})
 
     levels = []
@@ -5160,6 +5240,7 @@ RC_CSS = "".join([
     ".rc-table tbody td:first-child{text-align:left;color:#55524D;font-weight:500}",
     ".rc-table tbody td:last-child{text-align:left}",
     ".rc-table tbody td.rc-t{font-weight:700;color:#1C1B19}",
+    ".rc-table tbody td.rc-r{font-weight:600;color:#3A0CA3}",
     ".rc-card{border:1px solid #E2DED6;border-radius:10px;padding:20px 22px;display:flex;flex-wrap:wrap;gap:20px 36px}",
     ".rc-left{flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:10px}",
     ".rc-right{flex:1.4 1 420px;min-width:0;display:flex;flex-direction:column;gap:8px}",
@@ -5236,11 +5317,11 @@ def rc_render_html(A, settings, stats, cmp=None):
     h.append("</div></div>")
 
     h.append('<div class="rc-sec"><div class="rc-h3">Does it hold across time</div><table class="rc-table"><thead><tr>'
-             "<th>Sortino</th><th>As tested</th><th>Neighbors' average</th><th>Typical nearby run</th><th>Read</th>"
+             "<th>Sortino</th><th>As tested</th><th>Neighbors' average</th><th>Typical nearby run</th><th>Realistic</th><th>Read</th>"
              "</tr></thead><tbody>")
     for r in A["time_rows"]:
         h.append(f'<tr><td>{esc(r["label"])}</td><td class="rc-t">{esc(r["tested"])}</td><td>{esc(r["near"])}</td>'
-                 f'<td>{esc(r["typical"])}</td><td>{_rc_pill_html(r["pill"])}</td></tr>')
+                 f'<td>{esc(r["typical"])}</td><td class="rc-r">{esc(r["range"])}</td><td>{_rc_pill_html(r["pill"])}</td></tr>')
     h.append("</tbody></table></div>")
 
     mp, sp = int(round(A["mild"] * 100)), int(round(A["spike"] * 100))
@@ -5497,7 +5578,7 @@ cost_per_side_pct = st.sidebar.number_input(
 cost_per_side = cost_per_side_pct / 100.0
 
 # ---- REALITY CHECK (added November 16, 2026) ----
-with st.sidebar.expander("Reality Check", expanded=False):
+with st.sidebar.expander("Reality Check", expanded=True):
     rc_mode_label = st.radio(
         "Neighbor backtests",
         options=list(RC_MODE_OPTIONS.keys()),
