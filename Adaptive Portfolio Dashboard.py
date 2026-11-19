@@ -342,6 +342,22 @@ JOIN_WHEN_AVAILABLE_EQUITY = {"EMXC"}
 HISTORY_START = "1980-01-02"
 
 
+def earliest_backtest_start(main_lookbacks, vol_months):
+    """The earliest backtest start, as "YYYY-MM", that the default basket's
+    history allows for a main lookback and a volatility window.
+
+    Two things have to be in place by the first month held. The app's data
+    check wants each fund's first price a full month before the longest
+    lookback begins, which is the longest lookback plus two months after
+    HISTORY_START's month. Position sizing wants a full volatility window,
+    which is vol_months after it. The later of the two wins: 1981-01 at 2/8
+    and 12 months, 1981-02 at 2/11, 1981-07 with an 18-month window. A blank
+    start box means this month (added November 18, 2026). A custom fund with
+    a shorter history still has to pass the data check.
+    """
+    first = pd.Period(HISTORY_START, "M")
+    return str(first + max(int(vol_months), int(max(main_lookbacks)) + 2))
+
 # Calendar anchor. The trading calendar is every weekday on which an
 # exchange-listed ticker printed a close (market_trading_dates), and local
 # price files do not vote. Before 1983 the default basket has no Yahoo ticker
@@ -6090,11 +6106,24 @@ with st.sidebar.expander("G1 Cash Rule", expanded=False):
 st.sidebar.markdown("---")
 st.sidebar.header("Backtest Period")
 
-backtest_start = st.sidebar.text_input(
+# The start box is blank at startup since November 18, 2026 (Tyler's decision
+# that day; it was pre-filled with 1995-06 before). Blank means the earliest
+# month the lookback and volatility window chosen above allow
+# (earliest_backtest_start), shown under the box. A month typed in is used as
+# it is, so 1995-06 runs as it always did.
+earliest_start = earliest_backtest_start(main_lookbacks, vol_months)
+backtest_start_typed = st.sidebar.text_input(
     "Backtest start (YYYY-MM)",
-    value="1995-06",
-    help="Results will be filtered to start from this month."
+    value="",
+    help=(
+        "Leave blank to start at the earliest month the data allows for the lookback and volatility "
+        "window chosen above. Enter YYYY-MM to start later; results are filtered to start from that month."
+    ),
+    placeholder="e.g. 1995-06",
 )
+backtest_start = backtest_start_typed.strip() or earliest_start
+if not backtest_start_typed.strip():
+    st.sidebar.caption(f"Blank starts at {earliest_start}, the earliest month these settings allow.")
 
 backtest_end = st.sidebar.text_input(
     "Backtest end (YYYY-MM)",
