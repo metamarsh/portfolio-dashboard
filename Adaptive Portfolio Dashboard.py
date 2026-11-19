@@ -326,12 +326,44 @@ DEFAULT_FIXED_ASSETS = {
 # holds it).
 JOIN_WHEN_AVAILABLE = {"IBIT", "BTC-USD"}
 
+# Equity funds that may start after the backtest start. Emerging markets have
+# no usable daily history before October 16, 1991 (EMXC_X, Templeton
+# Developing Markets), so from a 1981 start the equity step picks from the
+# other equity funds until EMXC has more month-ends than the longest lookback
+# (mid-1992 at 2/8), which run_backtest already does for any equity fund. The
+# data check lets one through only while enough other equity funds have
+# history to fill the equity picks. Added November 18, 2026, with the history
+# back to 1980 (Tyler's decision of that day).
+JOIN_WHEN_AVAILABLE_EQUITY = {"EMXC"}
+
+# The first day of the engine's history: the older segments ("<NAME> X Daily
+# Prices.csv" and "HGER TR Daily Prices.csv", added November 18, 2026) all
+# begin here, except emerging markets (1991-10-16).
+HISTORY_START = "1980-01-02"
+
+
+# Calendar anchor. The trading calendar is every weekday on which an
+# exchange-listed ticker printed a close (market_trading_dates), and local
+# price files do not vote. Before 1983 the default basket has no Yahoo ticker
+# that should be trusted to mark the days, so the S&P 500 index is downloaded
+# with every run and votes like any other ticker. It is never traded, ranked
+# or shown. Added November 18, 2026.
+CALENDAR_TICKER = "^GSPC"
+
 # Expense-ratio adjustment applied to a backfilled (synthetic) segment, by
 # primary ticker. A number applies to every segment of the chain; a
 # {backfill ticker: fee} dict sets one per source; a negative fee is a credit.
 # Needed where the backfill source is the underlying asset itself, so the
 # synthetic era would otherwise carry no fund fees, or a fund whose fee
 # differs from the primary's.
+# The older segments added November 18, 2026 (TBILL_X, TLT_X, BTAL_X, QQQ_X,
+# IWM_X, DXJ_X, EMXC_X, HGER_TR, GOLD_X, IEI_X, SPY_X, AOR_X, AOA_X) already
+# carry their fund's fee in the file, so none is listed here and none is
+# charged again. Two adjustments are written into the files themselves, as
+# the 1981 research panel applied them: QQQ_X holds the Nasdaq-100 price
+# index's +0.56% a year credit, and GOLD_X holds GLDM's 0.10% a year
+# (Build Engine Segments.py in History Extension 2026-11-18\Engine
+# Integration 2026-11-18).
 BACKFILL_FEE_ANNUAL = {
     "IBIT": 0.0025,   # iShares Bitcoin Trust, 0.25%/yr
     # GLDM (0.10%/yr) before its June 26, 2018 launch: GLD's prices already
@@ -352,7 +384,33 @@ BACKFILL_FEE_ANNUAL = {
     # HGER's 0.68%/yr fee on its index history before its February 10, 2022
     # launch: QCI is the Quantix index's hypothetical back-test and QCI_SYNTH a
     # broad commodity index, neither with a fund fee. Added November 3, 2026.
-    "HGER": 0.0068,
+    # Set per source since November 18, 2026: HGER_TR, the segment before
+    # 1991, already carries the 0.68%, so one rate for the whole chain would
+    # charge it twice. A custom source typed into HGER's row is charged
+    # nothing unless it is listed here.
+    "HGER": {"QCI": 0.0068, "QCI_SYNTH": 0.0068},
+}
+
+# A backfill source's own prices from before this date are left out of the
+# chain, by primary ticker and source, so the next source in the chain covers
+# those years (PRIMARY_HISTORY_FROM does the same for a primary). Added
+# November 18, 2026, with the history back to 1980:
+#   NAESX. Yahoo's mutual fund prices from the 1980s miss distributions: NAESX
+#   shows 2.6% a year for 1980 to 1989 against 18.2% for the small-company
+#   series fitted to the Russell 2000. No Yahoo fund NAV from before 1990
+#   reaches a chain; IWM_X carries IWM there.
+#   ^NDX. The Nasdaq-100 itself from its first day (January 31, 1985) and a
+#   scaled Nasdaq Composite before it are in QQQ_X, so ^NDX is used from 1990.
+#   GOLD (for GLDM only). GOLD_X carries the years before 1990: the same file
+#   with its 1984-12-27 bad print repaired and missing exchange days carried
+#   forward, and Investing.com's gold spot before the file begins on
+#   1980-06-25. GLD's own rule, for a GLD typed as a custom ticker, is
+#   unchanged.
+# The dates are the 1981 research panel's splice dates (its FLOORS).
+BACKFILL_SOURCE_FROM = {
+    "IWM": {"NAESX": "1990-01-02"},
+    "QQQ": {"^NDX": "1990-01-02"},
+    "GLDM": {"GOLD": "1990-01-02"},
 }
 
 # A primary's own prices from before this date are dropped and replaced by its
@@ -394,7 +452,9 @@ DATA_ADJUSTMENT_NOTES = {
         "back-test before the index's January 2022 launch), and before 2001 a broad commodity index built "
         "to track Bloomberg's (QCI_SYNTH), with HGER's 0.68% fee charged throughout. The Quantix back-test "
         "compounded far faster than broad commodities (about 10% a year in 2001-2025 against about 1.5%), "
-        "so results that lean on HGER before 2022 flatter it; research rechecks them on the broad index alone."
+        "so results that lean on HGER before 2022 flatter it; research rechecks them on the broad index alone. "
+        "Before 1991: T-bills plus 0.66 x the S&P GSCI Total Return's excess over T-bills, less the 0.68% fee "
+        "(from January 1980). The GSCI is far heavier in energy than HGER's index and held none before 1987."
     ),
     "BTAL": (
         "Its own closes from January 2, 2019. From its September 2011 launch through 2018 it traded a few "
@@ -402,23 +462,29 @@ DATA_ADJUSTMENT_NOTES = {
         "and made it look more volatile than it was; its daily NAV (AGF's, distributions reinvested) is used "
         "instead. Before launch: T-bills + 0.733 x the AQR Betting Against Beta factor - 0.600 x the S&P "
         "500's return over T-bills, fitted to BTAL's 2011-2025 returns (correlation 0.75 out of sample), "
-        "the least certain stand-in."
+        "the least certain stand-in. Before 1990 the same formula is carried back to January 1980 on Ken "
+        "French's market return; it earns 32.8% a year over 1981 to 1984, likely more than the fund's design "
+        "would have."
     ),
     "BIL": (
         "Before its May 30, 2007 launch: the 13-week T-bill's total return less BIL's fee (tracking error "
         "0.15% a year against BIL since 2007). It replaced a 1-3 year Treasury fund 5.5 times as volatile, "
-        "which had shrunk the cash weight in defensive months. BIL is also the risk-free rate."
+        "which had shrunk the cash weight in defensive months. BIL is also the risk-free rate. Before 1990 "
+        "the same build, from January 1980."
     ),
     "TLT": (
         "Before its July 30, 2002 launch: 20 to 30-year Treasuries priced off the Federal Reserve's "
         "zero-coupon curve, less TLT's 0.15% fee (tracking error 1.5% a year against TLT since 2002). It "
-        "replaced a 10-plus-year bond fund with about 15% less duration."
+        "replaced a 10-plus-year bond fund with about 15% less duration. Before January 31, 1990: a 30-year "
+        "Treasury priced off Yahoo's 30-year yield, scaled to the same duration, less the fee (from January "
+        "1980; the Federal Reserve's curve has no 30-year point before November 1985)."
     ),
     "GLDM": (
         "Before its June 26, 2018 launch: GLD, credited 0.30% a year for GLD's higher fee, and before GLD's "
         "November 18, 2004 launch, the daily gold price less GLDM's 0.10% fee. That price series had filed "
         "each close a day early; its dates were corrected on November 7, 2026, so backtests run before then "
-        "that start before 2006 differ."
+        "that start before 2006 differ. Before 1990 the same gold price with a 1984 bad print repaired, and "
+        "before June 25, 1980 Investing.com's gold spot, both less the 0.10% fee."
     ),
     "GLD": (
         "Before its November 18, 2004 launch: the daily gold price, with no fund fee charged. That price "
@@ -429,25 +495,31 @@ DATA_ADJUSTMENT_NOTES = {
         "Before its March 10, 1999 launch: Rydex's Nasdaq-100 index fund (RYOCX), credited 1.26% a year for "
         "its higher costs (correlation 0.999 with QQQ since 1999), and before February 1994 the Nasdaq-100 "
         "price index plus 0.56% a year. It replaced an actively managed tech fund that the Nasdaq-100 beat "
-        "by about 10 points a year."
+        "by about 10 points a year. Before January 31, 1985, when the Nasdaq-100 began: 1.35 x the Nasdaq "
+        "Composite's daily move, the least certain stretch of QQQ's history."
     ),
     "IWM": (
         "Before its May 26, 2000 launch: Vanguard Small-Cap Index (NAESX), which tracked the Russell 2000 "
         "until 2003 (tracking error 2.6% a year). It replaced an active small-cap fund that ran about 5.6 "
-        "points a year ahead of IWM."
+        "points a year ahead of IWM. Before 1990: Ken French's small-company portfolios fitted to IWM, less "
+        "1.52% a year (Yahoo's NAESX prices from the 1980s miss distributions, so they are not used)."
     ),
     "DXJ": (
         "DXJ was an unhedged Japan dividend fund until March 31, 2010, so its own prices start April 1, "
         "2010. Before that: its own and the MSCI Japan fund's (EWJ) returns converted to yen-hedged, with a "
         "hedged Nikkei 225 futures proxy before November 1996 (the same conversion tracks the real hedged "
-        "MSCI Japan fund at a 0.97 correlation). Six misdated 2008 yen closes in Yahoo's data are repaired."
+        "MSCI Japan fund at a 0.97 correlation). Six misdated 2008 yen closes in Yahoo's data are repaired. "
+        "Before February 1993: the Nikkei 225 with dividends, yen-hedged at the Japan and US short rates "
+        "(from January 1980). No such fund existed then, and it compounds 29% a year over 1985 to 1989."
     ),
     "EMXC": (
         "Before its July 2017 launch: a synthetic MSCI Emerging Markets ex China, EEM less a China sleeve "
         "at China's published index weight, from October 2004 (after launch it picked the same equities as "
         "real EMXC in 103 of 109 months); EEM before that; and before April 2003 Vanguard's EM index fund "
         "(VEIEX), whose index held Hong Kong and Singapore and, until 2000-2001, no Korea, Taiwan, China or "
-        "India, a known limit."
+        "India, a known limit. Before May 4, 1994: Templeton Developing Markets (TEDMX), an actively managed "
+        "fund, from October 16, 1991. Nothing earlier, so from a 1981 start the equity step picks from the "
+        "other equity funds until mid-1992."
     ),
     "IBIT": (
         "Before its January 11, 2024 launch: Bitcoin's price (BTC-USD) less IBIT's 0.25% fee, on exchange "
@@ -457,11 +529,19 @@ DATA_ADJUSTMENT_NOTES = {
     ),
     "AOR": (
         "The 60/40 benchmark line uses Vanguard's balanced fund VSMGX through May 2009, because AOR traded "
-        "too thinly at first to track its holdings (it fell 16.2% on December 1, 2008, against VSMGX's 6.1%)."
+        "too thinly at first to track its holdings (it fell 16.2% on December 1, 2008, against VSMGX's 6.1%). "
+        "Before September 30, 1994: 60% US stocks and 40% a 1 to 10-year Treasury ladder, less 0.15%. It is "
+        "US-only, and such mixes have run about 1.0 point a year ahead of the real global fund since 1994."
     ),
     "AOA": (
         "The 80/20 benchmark line uses Vanguard's VASGX through May 2009, because AOA traded too thinly at "
-        "first to track its holdings."
+        "first to track its holdings. Before September 30, 1994: 80% US stocks and 20% a 1 to 10-year "
+        "Treasury ladder, less 0.15%. It is US-only, and such mixes have run about 1.3 points a year ahead "
+        "of the real global fund since 1994."
+    ),
+    "SPY": (
+        "Before its January 29, 1993 first close: the S&P 500 with dividends, less SPY's 0.0945% fee (a "
+        "0.998 monthly correlation with SPY since 1993)."
     ),
     "MNK_SYNTH": (
         "A synthetic for the CME Micro Nikkei 225 future, not a fund: the full-size dollar Nikkei future's "
@@ -469,11 +549,11 @@ DATA_ADJUSTMENT_NOTES = {
         "in 2025-2026 (+52.35% against MNK's +52.07% over that year)."
     ),
     "IEI": (
-        "Used by the G1 cash rule. Before its January 2007 launch: Vanguard Intermediate-Term Treasury "
-        "(VFITX, from October 1991), its daily returns chained onto IEI's first close with no fee "
-        "adjustment, as in the November 7, 2026 test of the rule. A capital-gain distribution of "
-        "$0.413 a share on December 31, 1993 that Yahoo's prices lack is restored (Vanguard's 1994 "
-        "prospectus); it falls before any start the default basket allows."
+        "Used by the G1 cash rule. Before its January 11, 2007 first close: a 3 to 7-year Treasury ladder "
+        "priced off the Federal Reserve's curve, less IEI's 0.15% fee, from January 1980 (tracking error "
+        "0.46% a year against IEI since 2007). Until November 18, 2026 Vanguard Intermediate-Term Treasury "
+        "(VFITX) carried those years, as in the November 7, 2026 test of the rule; type VFITX as the G1 "
+        "backfill to reproduce it."
     ),
 }
 
@@ -511,6 +591,11 @@ MAIN_LOOKBACK_OPTIONS = {
 }
 
 BENCHMARK_TICKER = "SPY"
+# SPY's history before its first close (January 29, 1993): SPY_X, the S&P 500
+# with dividends less SPY's 0.0945% fee. Applied on every run, like the
+# balanced benchmarks' chains, unless a Backfill Rules row is typed for SPY.
+# Added November 18, 2026.
+BENCHMARK_BACKFILL = ["SPY_X"]
 INITIAL_CAPITAL = 10_000
 
 # Trading cost per side, charged on one-way turnover at every rebalance
@@ -555,9 +640,13 @@ ERC_KEEP = ("BIL",)               # keep their inverse-volatility weight, outsid
 # below its level 63 trading days earlier. The record:
 # C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System\Basket Research\ETF Scouting\Unconventional Ideas Test 2026-11-07\
 # The sidebar's G1 Cash Rule section turns it on and changes any setting.
+# Since November 18, 2026 (Tyler's decision) IEI_X carries IEI before its
+# January 11, 2007 first close, in VFITX's place: a 3 to 7-year Treasury
+# ladder off the Federal Reserve curve, less IEI's 0.15%, from 1980. Type
+# VFITX into the G1 section's backfill box to reproduce the November 7 test.
 G1_DEFAULTS = {
     "fund": "IEI",
-    "backfill": ["VFITX"],
+    "backfill": ["IEI_X"],
     "fraction": 0.5,
     "yield_gate": True,
     "yield_ticker": "^FVX",
@@ -600,11 +689,16 @@ BRAND_HIGHLIGHT_BG = "#F0EDF8"  # Light purple tint for selected table rows
 #              sidebar backfill rows. AOR/AOA only go back to their 2008
 #              ETF inception, so we splice the Vanguard LifeStrategy mutual
 #              funds (global, same 60/40 and 80/20 structure, inception
-#              Sept 1994) onto them to reach the mid-1990s.
+#              Sept 1994) onto them to reach the mid-1990s. Before the
+#              Vanguard funds begin (September 30, 1994), AOR_X and AOA_X:
+#              60/40 and 80/20 mixes of US stocks and a 1 to 10-year
+#              Treasury ladder, rebalanced daily, less 0.15% (added
+#              November 18, 2026). They are US-only, where the real funds
+#              hold international stocks.
 # Set to [] to disable balanced benchmarks entirely.
 BAL_BENCHMARKS = [
-    {"label": "60/40", "ticker": "AOR", "color": BRAND_CYAN, "linestyle": "--", "backfill": ["VSMGX"]},
-    {"label": "80/20", "ticker": "AOA", "color": BRAND_BLUE, "linestyle": "-.", "backfill": ["VASGX"]},
+    {"label": "60/40", "ticker": "AOR", "color": BRAND_CYAN, "linestyle": "--", "backfill": ["VSMGX", "AOR_X"]},
+    {"label": "80/20", "ticker": "AOA", "color": BRAND_BLUE, "linestyle": "-.", "backfill": ["VASGX", "AOA_X"]},
 ]
 
 _base_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in dir() else "."
@@ -1153,7 +1247,7 @@ def market_trading_dates(daily_prices):
 
 
 def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers,
-                            fee_annual=0.0, primary_from=None):
+                            fee_annual=0.0, primary_from=None, source_from=None):
     """
     Build a single price series for primary_ticker, extending it backward
     using backfill tickers (in priority order) where the primary has no data.
@@ -1174,6 +1268,11 @@ def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers,
     primary_from drops the primary's own prices before that date, so the
     backfill chain covers them too, for a fund whose strategy changed (see
     PRIMARY_HISTORY_FROM).
+
+    source_from, a {backfill ticker: date} dict, drops a source's own prices
+    before that date, so the next source in the chain covers the earlier
+    years (see BACKFILL_SOURCE_FROM; added November 18, 2026). Left out,
+    every source is used from its first price, as before.
 
     The synthetic segment is also masked to the exchange calendar whenever
     the primary is not itself a 24/7 asset. A 24/7 backfill source such as
@@ -1211,6 +1310,8 @@ def build_backfilled_series(daily_prices, primary_ticker, backfill_tickers,
             continue
 
         bf_series = daily_prices[bf_ticker].dropna()
+        if source_from and bf_ticker in source_from:
+            bf_series = bf_series[bf_series.index >= pd.Timestamp(source_from[bf_ticker])]
         if bf_series.empty:
             continue
 
@@ -5076,7 +5177,9 @@ def rc_basket_b_params(params, b):
 def rc_basket_b_issues(daily_prices, params, b):
     """Basket B's funds that the run's basket does not already cover and that lack the history the run needs,
     as (fund, sentence) pairs. The cutoff is the main run's data check: the start month less the longest
-    lookback and one more month. A fund that may join late (JOIN_WHEN_AVAILABLE) is allowed in the fixed basket."""
+    lookback and one more month. A fund that may join late (JOIN_WHEN_AVAILABLE) is allowed in the fixed basket,
+    and one in JOIN_WHEN_AVAILABLE_EQUITY in the equity basket while Basket B's other equity funds can fill its
+    equity picks (as in the main run's data check)."""
     try:
         y, m = (int(x) for x in str(params["backtest_start"]).split("-")[:2])
         longest = max(int(x) for x in params["main_lookbacks"])
@@ -5087,13 +5190,24 @@ def rc_basket_b_issues(daily_prices, params, b):
     if int(params.get("equity_top_n", 0)) > 0:
         covered |= set(params.get("equity_tickers", []))
     issues = []
+    eq_on_time = 0
+    for t in b["equity"]:
+        fv = daily_prices[t].dropna().index.min() if t in daily_prices.columns else None
+        if fv is not None and not pd.isna(fv) and fv <= required_by:
+            eq_on_time += 1
+    eq_late_ok = int(b["equity_top_n"]) > 0 and eq_on_time >= int(b["equity_top_n"])
     for t in rc_basket_b_funds(b):
-        if t in covered:
-            continue
         first = daily_prices[t].dropna().index.min() if t in daily_prices.columns else None
+        # A fund the run's own basket covers passed the run's data check, unless it is a late equity
+        # fund that Basket B, with a fund left out, can no longer cover for.
+        stranded = (first is not None and not pd.isna(first) and first > required_by
+                    and t in b["equity"] and t not in b["fixed"] and not eq_late_ok)
+        if t in covered and not stranded:
+            continue
         if first is None or pd.isna(first):
             issues.append((t, f"{t} has no prices in the data."))
-        elif first > required_by and not (t in JOIN_WHEN_AVAILABLE and t in b["fixed"]):
+        elif first > required_by and not (t in JOIN_WHEN_AVAILABLE and t in b["fixed"]) and not (
+                t in JOIN_WHEN_AVAILABLE_EQUITY and t in b["equity"] and t not in b["fixed"] and eq_late_ok):
             issues.append((t, f"{t} has prices only from {first:%B %d, %Y}, and this run needs them by "
                               f"{required_by:%B %Y}."))
     return issues
@@ -5905,10 +6019,12 @@ with st.sidebar.expander("G1 Cash Rule", expanded=False):
             "Its backfill chain (before the fund's launch)",
             value=", ".join(G1_DEFAULTS["backfill"]),
             key="g1_backfill",
-            help="VFITX (Vanguard Intermediate-Term Treasury, from October "
-                 "1991) carries IEI before its January 2007 launch. Leave "
-                 "blank to use the fund's own prices only. A row for the same "
-                 "fund under Backfill Rules takes precedence.",
+            help="IEI_X (a 3 to 7-year Treasury ladder, from January 1980) "
+                 "carries IEI before its January 2007 launch. VFITX (Vanguard "
+                 "Intermediate-Term Treasury, from October 1991) did until "
+                 "November 18, 2026; type it to reproduce the November 7 test. "
+                 "Leave blank to use the fund's own prices only. A row for the "
+                 "same fund under Backfill Rules takes precedence.",
         )
 
         g1_fraction_pct = st.slider(
@@ -6238,9 +6354,18 @@ st.sidebar.markdown("---")
 
 # Pre-filled defaults based on Portfolio Visualizer backfill mappings
 BACKFILL_DEFAULTS = [
+    # The last source in most rows is the fund's older segment, added November
+    # 18, 2026 to carry the history back to January 2, 1980 (emerging markets
+    # to October 16, 1991): "<NAME> X Daily Prices.csv" and "HGER TR Daily
+    # Prices.csv", spliced at the 1981 research panel's dates. Each already
+    # carries its fund's fee (see BACKFILL_FEE_ANNUAL), and
+    # BACKFILL_SOURCE_FROM keeps NAESX, ^NDX and GOLD out of the years before
+    # 1990. Sources, checks and limits: "Data Adjustments.md".
     # HGER's index history carries its 0.68% fee (BACKFILL_FEE_ANNUAL) since
-    # November 3, 2026.
-    ("HGER",    "QCI, QCI_SYNTH"),
+    # November 3, 2026. HGER_TR before 1991: T-bills + 0.66 x the S&P GSCI
+    # Total Return's excess over T-bills, less 0.68%, scaled to QCI_SYNTH's
+    # daily volatility.
+    ("HGER",    "QCI, QCI_SYNTH, HGER_TR"),
     # BTAL_NAV: BTAL's daily NAV with distributions reinvested, from "BTAL NAV
     # Daily Prices.csv" (AGF's NAV file), for September 12, 2011 to 2018, when
     # BTAL's own closes are replaced (PRIMARY_HISTORY_FROM). Added November 4,
@@ -6248,44 +6373,58 @@ BACKFILL_DEFAULTS = [
     # 500's return over T-bills, fitted to BTAL 2011-2025, from "BTAL SYNTH
     # Daily Prices.csv". BTAL_SYNTH replaced the raw BAB factor, which is beta
     # neutral and so lacked BTAL's short-market tilt, November 3, 2026.
-    ("BTAL",    "BTAL_NAV, BTAL_SYNTH"),
+    # BTAL_X before 1990: BTAL_SYNTH's formula carried back to 1980.
+    ("BTAL",    "BTAL_NAV, BTAL_SYNTH, BTAL_X"),
     # TBILL_SYNTH: 13-week T-bill total return less BIL's fee, from
     # "TBILL SYNTH Daily Prices.csv". Replaced VFISX, a 1-3 year Treasury
-    # fund, November 3, 2026. BIL is also the risk-free rate.
-    ("BIL",     "TBILL_SYNTH"),
+    # fund, November 3, 2026. BIL is also the risk-free rate. TBILL_X before
+    # 1990: the same build from 1980.
+    ("BIL",     "TBILL_SYNTH, TBILL_X"),
     # TLT_SYNTH: 20-30 year par Treasuries priced off the Federal Reserve's
     # zero-coupon curve, from "TLT SYNTH Daily Prices.csv". Replaced VUSTX
-    # (10+ year bonds, about 15% less duration) November 3, 2026.
-    ("TLT",     "TLT_SYNTH"),
+    # (10+ year bonds, about 15% less duration) November 3, 2026. TLT_X before
+    # January 31, 1990: a long Treasury priced off Yahoo's 30-year yield
+    # (the Federal Reserve curve has no 30-year point before November 1985).
+    ("TLT",     "TLT_SYNTH, TLT_X"),
     # GLDM: GLD's history before GLDM's June 26, 2018 launch, then GOLD (the
     # daily gold price; dates corrected November 7, 2026) before GLD's
     # November 18, 2004 launch, both fee-adjusted to GLDM's 0.10%
     # (BACKFILL_FEE_ANNUAL). The default since November 3, 2026.
     # Keep this row above GLD's: rules run in order, and GLDM's chain must
     # read GLD's own prices before GLD's rule extends them with GOLD.
-    ("GLDM",    "GLD, GOLD"),
+    # GOLD_X before 1990: the same gold price with a 1984 bad print repaired,
+    # and gold spot before the GOLD file begins in June 1980.
+    ("GLDM",    "GLD, GOLD, GOLD_X"),
     # GLD is no longer a ticked option; this rule serves a GLD typed into the
     # custom tickers box.
     ("GLD",     "GOLD"),
     # QQQ: RYOCX (Rydex OTC, a Nasdaq-100 index fund) from February 1994,
     # then the Nasdaq-100 price index, fee-adjusted (BACKFILL_FEE_ANNUAL).
     # Replaced FSPTX, an actively managed tech fund, November 3, 2026.
-    ("QQQ",     "RYOCX, ^NDX"),
+    # QQQ_X before 1990: the Nasdaq-100 from its first day (January 31, 1985)
+    # and a scaled Nasdaq Composite before it, with the 0.56% credit in the file.
+    ("QQQ",     "RYOCX, ^NDX, QQQ_X"),
     # NAESX: Vanguard Small-Cap Index, which tracked the Russell 2000 until 2003.
     # Replaced OTCFX, an actively managed fund that ran well ahead of the index,
     # November 3, 2026 (see NAESX Impact Check.py in Basket Research\ETF Scouting).
-    ("IWM",     "NAESX"),
+    # IWM_X before 1990: a small-company series fitted to the Russell 2000
+    # (NAESX's own 1980s prices miss distributions).
+    ("IWM",     "NAESX, IWM_X"),
     # EMXC_SYNTH: synthetic MSCI EM ex China, 2004-10 to EMXC's July 2017
     # launch, from "EMXC SYNTH Daily Prices.csv" (Build Synthetic EMXC.py).
     # Replaced the EEM-only backfill October 3, 2026, because EEM holds China.
-    ("EMXC",    "EMXC_SYNTH, EEM, VEIEX"),
+    # EMXC_X before May 4, 1994: Templeton Developing Markets (TEDMX), from
+    # October 16, 1991. Nothing earlier, so EMXC joins late from a 1981 start
+    # (JOIN_WHEN_AVAILABLE_EQUITY).
+    ("EMXC",    "EMXC_SYNTH, EEM, VEIEX, EMXC_X"),
     # DXJ_HEDGED: DXJ's own unhedged returns before its April 1, 2010 change
     # to a yen-hedged fund and EWJ's from November 1996, converted to
     # yen-hedged, with MNK_SYNTH before that; from "DXJ HEDGED Daily
     # Prices.csv". DXJ's own prices before 2010-04-01 are replaced
     # (PRIMARY_HISTORY_FROM). Replaced FJPNX, an actively managed unhedged
-    # fund, November 3, 2026.
-    ("DXJ",     "DXJ_HEDGED"),
+    # fund, November 3, 2026. DXJ_X before February 1993: the Nikkei 225 with
+    # dividends, yen-hedged at the Japan and US short rates.
+    ("DXJ",     "DXJ_HEDGED, DXJ_X"),
     # BTC-USD: Bitcoin's own price before IBIT's January 11, 2024 launch, less
     # IBIT's 0.25% fee (BACKFILL_FEE_ANNUAL). For stress tests, the "Bitcoin
     # history" switch in Backfill Rules (BTC_HISTORY_OPTIONS) puts BTC_TAMED in
@@ -6363,12 +6502,16 @@ with st.sidebar.expander("Backfill Rules", expanded=False):
 
 # Always back-fill the balanced benchmarks from the proxies declared in
 # BAL_BENCHMARKS, regardless of the sidebar backfill rows above. This keeps
-# AOR/AOA history extended back to the mid-1990s (via VSMGX/VASGX) on every
+# AOR/AOA history extended back to 1980 (via VSMGX/VASGX, then AOR_X/AOA_X) on every
 # run so the benchmark lines match the strategy and SPY across the full window.
 for _bcfg in BAL_BENCHMARKS:
     _bf_chain = _bcfg.get("backfill")
     if _bf_chain:
         backfill_rules[_bcfg["ticker"]] = [t.strip().upper() for t in _bf_chain]
+# The S&P 500 line's history before SPY's first close (BENCHMARK_BACKFILL),
+# unless a row above already gives SPY a chain. Added November 18, 2026.
+if BENCHMARK_BACKFILL and BENCHMARK_TICKER not in backfill_rules:
+    backfill_rules[BENCHMARK_TICKER] = list(BENCHMARK_BACKFILL)
 
 # ---- DATA CACHE ----
 st.sidebar.markdown("---")
@@ -6424,7 +6567,7 @@ if run_button:
         # Gather ALL tickers needed (including backfills)
         all_tickers_needed = (
             list(selected_fixed) + list(selected_equity)
-            + [BENCHMARK_TICKER, "BIL"]
+            + [BENCHMARK_TICKER, "BIL", CALENDAR_TICKER]
             + [c["ticker"] for c in BAL_BENCHMARKS]
         )
         if leverage_enabled and leverage_params_ui.get("method") == "vt_trend" and leverage_params_ui.get("ticker"):
@@ -6490,6 +6633,7 @@ if run_button:
                         daily_prices, primary, chain,
                         fee_annual=BACKFILL_FEE_ANNUAL.get(primary, 0.0),
                         primary_from=PRIMARY_HISTORY_FROM.get(primary),
+                        source_from=BACKFILL_SOURCE_FROM.get(primary),
                     )
                     daily_prices[primary] = spliced
                     for seg_ticker, seg_start, seg_end in segments:
@@ -6515,6 +6659,16 @@ if run_button:
             except (ValueError, IndexError):
                 required_by = pd.Timestamp("2012-01-01")
 
+            # An equity fund in JOIN_WHEN_AVAILABLE_EQUITY may start late, as long
+            # as enough other equity funds have history to fill the equity picks.
+            _eq_on_time = 0
+            if equity_top_n > 0:
+                for _t in selected_equity:
+                    if _t in daily_prices.columns:
+                        _fv = daily_prices[_t].dropna().index.min()
+                        if _fv is not None and not pd.isna(_fv) and _fv <= required_by:
+                            _eq_on_time += 1
+
             data_issues = []
             late_joiners = []
             for ticker in all_selected:
@@ -6536,6 +6690,9 @@ if run_button:
                         })
                     elif first_valid > required_by:
                         if ticker in JOIN_WHEN_AVAILABLE and ticker in selected_fixed:
+                            late_joiners.append((ticker, first_valid))
+                        elif (ticker in JOIN_WHEN_AVAILABLE_EQUITY and ticker in selected_equity
+                              and ticker not in selected_fixed and _eq_on_time >= equity_top_n):
                             late_joiners.append((ticker, first_valid))
                         else:
                             data_issues.append({
@@ -6569,10 +6726,17 @@ if run_button:
                 # ---- RUN BACKTEST ----
                 for _lt, _lt_first in late_joiners:
                     _join = (_lt_first.to_period("M") + max_lb + 1).strftime("%Y-%m")
-                    st.info(
-                        f"{_lt} has prices from {_lt_first:%B %d, %Y}, so it joins the "
-                        f"basket from {_join}, once it has {max_lb} months of history."
-                    )
+                    if _lt in selected_fixed:
+                        st.info(
+                            f"{_lt} has prices from {_lt_first:%B %d, %Y}, so it joins the "
+                            f"basket from {_join}, once it has {max_lb} months of history."
+                        )
+                    else:
+                        st.info(
+                            f"{_lt} has prices from {_lt_first:%B %d, %Y}, so the equity step picks "
+                            f"from the other equity funds until {_join}, once it has {max_lb} months "
+                            f"of history."
+                        )
                 backfill_summary = "; ".join(
                     [f"{k} <- {', '.join(v)}" for k, v in backfill_rules.items()]
                 ) if backfill_rules else "None"
@@ -7489,6 +7653,7 @@ if run_button:
                         _run_assets = list(dict.fromkeys(
                             list(selected_fixed)
                             + (list(selected_equity) if equity_top_n > 0 else [])
+                            + [BENCHMARK_TICKER]
                             + [c["ticker"] for c in BAL_BENCHMARKS]
                             + ([g1_config["fund"]] if g1_config.get("enabled") else [])
                         ))
