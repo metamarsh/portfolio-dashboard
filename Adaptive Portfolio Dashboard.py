@@ -471,7 +471,9 @@ DATA_ADJUSTMENT_NOTES = {
     "IEI": (
         "Used by the G1 cash rule. Before its January 2007 launch: Vanguard Intermediate-Term Treasury "
         "(VFITX, from October 1991), its daily returns chained onto IEI's first close with no fee "
-        "adjustment, as in the November 7, 2026 test of the rule."
+        "adjustment, as in the November 7, 2026 test of the rule. A capital-gain distribution of "
+        "$0.413 a share on December 31, 1993 that Yahoo's prices lack is restored (Vanguard's 1994 "
+        "prospectus); it falls before any start the default basket allows."
     ),
 }
 
@@ -746,11 +748,36 @@ KNOWN_BAD_PRINTS = [
     ("DXJ_HEDGED", "2008-12-08"),
 ]
 
+# Distributions missing from Yahoo's adjusted closes, as (ticker, ex-date,
+# factor, trigger). Yahoo lowers a fund's whole earlier history at each
+# distribution it has on file, so one it lacks leaves a false one-day loss on
+# the ex-date. The repair multiplies every close before the ex-date by the
+# factor: the fund's ex-date NAV over that NAV plus the distribution, which is
+# reinvestment at the ex-date NAV. It runs only while the ex-date's own return
+# is still below the trigger, so it applies once per load and stops by itself
+# if Yahoo ever adds the distribution. The disk cache keeps Yahoo's values.
+#   VFITX 1993-12-31: Vanguard's May 20, 1994 prospectus (SEC EDGAR, accession
+#   0000912057-94-001821) shows $0.413 a share of realized capital gains for
+#   the fiscal year ended January 31, 1994; Yahoo has none on file. Its closes
+#   show -3.16% that day, when the 5-year Treasury yield barely moved, and
+#   +7.31% for calendar 1993 against Vanguard's published +11.43%. Factor
+#   10.71 / (10.71 + 0.413) = 0.96287; repaired, 1993 reads +11.45%. Found
+#   November 18, 2026. VFITX carries IEI before January 2007 for the G1 cash
+#   rule only, and the print sits before any start the default basket allows
+#   (1995-02), so no run changed. Evidence: C:\Users\tyler\OneDrive\PROJECTS\
+#   Strategy Backtesting System\Backtest Engine\History Extension 2026-11-18\
+#   VFITX Print Check\
+KNOWN_MISSING_DISTRIBUTIONS = [
+    ("VFITX", "1993-12-31", 0.96287, -0.02),
+]
+
 
 def apply_known_price_fixes(prices):
-    """Repair the KNOWN_BAD_PRINTS in a daily price frame, returning a copy if
-    anything changes. A print is skipped if its ticker or date is missing or
-    it has no trading day on either side."""
+    """Repair the KNOWN_BAD_PRINTS and the KNOWN_MISSING_DISTRIBUTIONS in a
+    daily price frame, returning a copy if anything changes. A print is
+    skipped if its ticker or date is missing or it has no trading day on
+    either side; a distribution is skipped if its ticker or date is missing,
+    or the date's return is not below its trigger."""
     if prices is None or prices.empty:
         return prices
     out = prices
@@ -767,6 +794,20 @@ def apply_known_price_fixes(prices):
         if out is prices:
             out = prices.copy()
         out.loc[day, ticker] = float(np.sqrt(series.iloc[i - 1] * series.iloc[i + 1]))
+    for ticker, date_str, factor, trigger in KNOWN_MISSING_DISTRIBUTIONS:
+        if ticker not in out.columns:
+            continue
+        series = out[ticker].dropna()
+        day = pd.Timestamp(date_str)
+        if day not in series.index:
+            continue
+        i = series.index.get_loc(day)
+        if i == 0 or series.iloc[i] / series.iloc[i - 1] - 1.0 >= trigger:
+            continue
+        if out is prices:
+            out = prices.copy()
+        early = out.index < day
+        out.loc[early, ticker] = out.loc[early, ticker] * factor
     return out
 
 
