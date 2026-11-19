@@ -476,11 +476,12 @@ DATA_ADJUSTMENT_NOTES = {
         "Its own closes from January 2, 2019. From its September 2011 launch through 2018 it traded a few "
         "hundred shares a day, often none, so its closes were stale marks that strayed from the fund's value "
         "and made it look more volatile than it was; its daily NAV (AGF's, distributions reinvested) is used "
-        "instead. Before launch: T-bills + 0.733 x the AQR Betting Against Beta factor - 0.600 x the S&P "
-        "500's return over T-bills, fitted to BTAL's 2011-2025 returns (correlation 0.75 out of sample), "
-        "the least certain stand-in. Before 1990 the same formula is carried back to January 1980 on Ken "
-        "French's market return; it earns 32.8% a year over 1981 to 1984, likely more than the fund's design "
-        "would have."
+        "instead. Before launch, from January 1980: T-bills + 0.873 x the daily US low-beta factor of "
+        "Jensen, Kelly and Pedersen (Journal of Finance 2023; jkpfactors.com, CC BY-NC 4.0), less 1.4% a "
+        "year for fund costs. Out of sample it tracks the real fund at a 0.92 monthly correlation, and BTAL's "
+        "own index back-test (2001-2011) at 0.97, still the least certain stand-in in the basket. Until "
+        "November 18, 2026 a formula on AQR's Betting Against Beta factor (BTAL_SYNTH) carried those years; "
+        "it ran about 4 points a year richer over 1981-2011 and got 2008 backwards."
     ),
     "BIL": (
         "Before its May 30, 2007 launch: the 13-week T-bill's total return less BIL's fee (tracking error "
@@ -6403,7 +6404,20 @@ BACKFILL_DEFAULTS = [
     # Daily Prices.csv". BTAL_SYNTH replaced the raw BAB factor, which is beta
     # neutral and so lacked BTAL's short-market tilt, November 3, 2026.
     # BTAL_X before 1990: BTAL_SYNTH's formula carried back to 1980.
-    ("BTAL",    "BTAL_NAV, BTAL_SYNTH, BTAL_X"),
+    # Since November 18, 2026 (Tyler's decision that night) BTAL_JKP carries
+    # every day before launch, in place of BTAL_SYNTH and BTAL_X: T-bills +
+    # 0.873 x the Jensen-Kelly-Pedersen daily US low-beta factor (Frazzini-
+    # Pedersen beta, capped value weights), less 1.4% a year for fund costs,
+    # from "BTAL JKP Daily Prices.csv" (1980-01-02 to its splice date,
+    # 2011-09-12). Out of sample it tracks real BTAL at 0.92 monthly (BTAL_SYNTH
+    # 0.78), and BTAL's own index back-test (2001-2011) at 0.97 (0.87). The
+    # 1.4% is in the file, so no fee is charged. JKP's data is CC BY-NC 4.0:
+    # Jensen, Kelly and Pedersen, "Is There a Replication Crisis in Finance?",
+    # Journal of Finance 2023, jkpfactors.com. BTAL_SYNTH and BTAL_X stay
+    # beside the engine as research brackets: type "BTAL_NAV, BTAL_SYNTH,
+    # BTAL_X" in this row to get the history used until then. Evidence:
+    # History Extension 2026-11-18\Step 9 BTAL Deep Dive\BTAL Deep Dive.md
+    ("BTAL",    "BTAL_NAV, BTAL_JKP"),
     # TBILL_SYNTH: 13-week T-bill total return less BIL's fee, from
     # "TBILL SYNTH Daily Prices.csv". Replaced VFISX, a 1-3 year Treasury
     # fund, November 3, 2026. BIL is also the risk-free rate. TBILL_X before
