@@ -147,28 +147,31 @@ st.markdown("""
     /* Button labels keep the button's own color (the rule above would turn them ink) */
     button [data-testid="stMarkdownContainer"], button [data-testid="stMarkdownContainer"] p { color: inherit; }
 
-    /* Results tabs: separated, outlined buttons (the look of the chart period buttons), the bar
-       held at the top while a tab scrolls. Selected by role, which both Streamlit's newer tabs and
-       the older BaseWeb ones carry. The selected tab is marked by its purple outline and tint, so
-       the underline each Streamlit build draws is hidden: BaseWeb's highlight and border elements,
-       the newer build's indicator inside each tab, and the rule under the newer build's bar. */
+    /* Results tabs: plain text tabs standing on a muted indigo rule, the selected one a solid
+       block of the same color (mockups H, P1 and M1 of November 20, 2026), the bar held at the top
+       while a tab scrolls. Selected by role, which both Streamlit's newer tabs and the older
+       BaseWeb ones carry. The selected tab is marked by its fill, so the underline each Streamlit
+       build draws is hidden: BaseWeb's highlight and border elements, the newer build's indicator
+       inside each tab, and the rule under the newer build's bar. */
     [data-testid="stTabs"] [role="tablist"] {
-        position: sticky; top: 3.75rem; z-index: 60; background: #ffffff; gap: 10px;
-        padding: 6px 0 10px 0;
+        position: sticky; top: 3.75rem; z-index: 60; background: #ffffff; gap: 6px;
+        padding: 6px 0 0 0; border-bottom: 3px solid #4B3F8F;
     }
     [data-testid="stTabs"] [role="tablist"]::after,
     [data-testid="stTabs"] [data-baseweb="tab-highlight"],
     [data-testid="stTabs"] [data-baseweb="tab-border"],
     [data-testid="stTabs"] [role="tab"] .react-aria-SelectionIndicator { display: none !important; }
     [data-testid="stTabs"] [role="tab"] {
-        height: auto; padding: 8px 16px; background: #ffffff;
-        border: 1px solid #D9D5CC; border-radius: 8px;
+        height: auto; padding: 8px 14px; background: transparent;
+        border: none; border-radius: 8px 8px 0 0;
     }
-    [data-testid="stTabs"] [role="tab"]:hover { border-color: #3A0CA3; background: #FAF9FD; }
-    [data-testid="stTabs"] [role="tab"][aria-selected="true"] { border-color: #3A0CA3; background: #F0EDF8; }
-    [data-testid="stTabs"] [role="tab"] p { font-size: 15px; font-weight: 500; color: #55524D; }
-    [data-testid="stTabs"] [role="tab"]:hover p { color: #3A0CA3; }
-    [data-testid="stTabs"] [role="tab"][aria-selected="true"] p { font-weight: 600; color: #3A0CA3; }
+    [data-testid="stTabs"] [role="tab"]:hover { background: #EFEDF6; }
+    [data-testid="stTabs"] [role="tab"][aria-selected="true"],
+    [data-testid="stTabs"] [role="tab"][aria-selected="true"]:hover { background: #4B3F8F; padding: 8px 18px; }
+    [data-testid="stTabs"] [role="tab"] p { font-size: 15px; font-weight: 600; color: #1C1B19; }
+    [data-testid="stTabs"] [role="tab"]:hover p { color: #4B3F8F; }
+    [data-testid="stTabs"] [role="tab"][aria-selected="true"] p,
+    [data-testid="stTabs"] [role="tab"][aria-selected="true"]:hover p { font-weight: 700; color: #ffffff; }
     [data-testid="stTabs"] [role="tabpanel"] { padding-top: 1.2rem; }
 
     /* Bordered containers (chart cards), expanders and alerts in the warm set */
@@ -184,10 +187,14 @@ st.markdown("""
     .ae-eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #3A0CA3; }
     .ae-title { font-family: 'IBM Plex Serif', Georgia, serif; font-size: 30px; line-height: 1.18; font-weight: 600; letter-spacing: -0.01em; color: #1C1B19; text-wrap: balance; }
     .ae-desc { max-width: 760px; font-size: 16px; line-height: 1.6; color: #55524D; }
-    .ae-otp { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 24px; margin-top: 10px; padding: 11px 0; border-top: 1px solid #E6E3DC; border-bottom: 1px solid #E6E3DC; }
-    .ae-otp .ae-otp-l { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #55524D; }
-    .ae-otp a, .ae-otp a:visited { font-size: 14px; font-weight: 500; color: #55524D !important; text-decoration: none; }
-    .ae-otp a:hover { color: #3A0CA3 !important; }
+    /* On this page: a segmented control with no label, in a muted indigo (mockups P1 and M1 of
+       November 20, 2026). The first link is solid until a link is followed; then the one followed
+       is (ae_head writes those rules, one per link). */
+    .ae-otp { display: flex; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+    .ae-otp .ae-otp-seg { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 4px; background: #EFEDF6; border: 1px solid #D6D1E8; border-radius: 10px; }
+    .ae-otp a, .ae-otp a:visited { display: inline-flex; align-items: center; min-height: 35px; padding: 0 16px; border-radius: 7px; font-size: 13.5px; font-weight: 600; color: #3A3170 !important; text-decoration: none; }
+    .ae-otp a:hover, .ae-otp a:focus-visible { background: #E0DCEE; }
+    .ae-otp .ae-otp-seg a:first-child { background: #4B3F8F; color: #ffffff !important; font-weight: 700; }
     .ae-h3 { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 20px; margin: 1.4rem 0 0.5rem 0; scroll-margin-top: 8rem; }
     .ae-h3-t { font-family: 'IBM Plex Serif', Georgia, serif; font-size: 22px; line-height: 1.2; font-weight: 600; color: #1C1B19; }
     .ae-h3-s { font-size: 14px; line-height: 1.55; color: #55524D; max-width: 780px; margin-top: 4px; }
@@ -3817,8 +3824,17 @@ def ae_head(eyebrow, title, desc_html="", links=None):
     if desc_html:
         parts.append(f'<div class="ae-desc">{desc_html}</div>')
     if links:
-        parts.append('<div class="ae-otp"><span class="ae-otp-l">On this page</span>'
-                     + "".join(f'<a href="#{a}">{ae_esc(t)}</a>' for a, t in links) + "</div>")
+        # No label. The link last followed is drawn solid (CSS :target, one rule per link, written
+        # here because the links differ by tab); until one is followed, the first link is.
+        ok = [a for a, _ in links if a[:1].isalpha() and a.replace("-", "").replace("_", "").isalnum()]
+        rules = "".join(f'body:has(#{a}:target) .ae-otp .ae-otp-seg a[href="#{a}"]'
+                        '{background:#4B3F8F;color:#ffffff !important;font-weight:700}' for a in ok)
+        rules += "".join(f'body:has(#{a}:target) .ae-otp .ae-otp-seg:has(a[href="#{a}"]) a:first-child'
+                         '{background:transparent;color:#3A3170 !important;font-weight:600}'
+                         for a in ok if a != links[0][0])
+        parts.append((f"<style>{rules}</style>" if rules else "")
+                     + '<div class="ae-otp"><span class="ae-otp-seg">'
+                     + "".join(f'<a href="#{a}">{ae_esc(t)}</a>' for a, t in links) + "</span></div>")
     parts.append("</div>")
     return "".join(parts)
 
