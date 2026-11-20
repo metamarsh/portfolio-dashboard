@@ -81,7 +81,7 @@ AE_RULE = "#E6E3DC"             # Dividers and table rules
 AE_CONTROL = "#D9D5CC"          # Pills, tags, control borders
 AE_CARD = "#E2DED6"             # Card borders
 AE_WASH = "#F5F4F0"             # Light fill: table heads, notes, hover
-AE_TINT = "#F0EDF8"             # Purple tint: held rows, "now" chips
+AE_TINT = "#EFEDF6"             # Purple tint: held rows, "now" chips
 AE_GAIN = "#1F8A4C"             # Gains
 AE_LOSS = "#B8432F"             # Losses
 AE_PLOT_GRID = "#EEEDE9"        # Chart gridlines
@@ -128,7 +128,7 @@ st.markdown("""
         color: #1C1B19; letter-spacing: -0.01em;
     }
     .ae-brand-header .ae-brand-tag {
-        font-size: 0.9rem; color: #55524D; border-left: 2px solid #3A0CA3; padding-left: 0.6rem;
+        font-size: 0.9rem; color: #55524D; border-left: 2px solid #4B3F8F; padding-left: 0.6rem;
     }
     .ae-brand-sub {
         font-size: 0.85rem; color: #55524D; margin: 0.35rem 0 0.4rem 0;
@@ -138,9 +138,9 @@ st.markdown("""
     /* Pills (if used): brand-purple active state */
     button[data-testid="stBaseButton-pills"][aria-checked="true"],
     button[data-variant="pills"][aria-checked="true"] {
-        background-color: #F0EDF8 !important;
-        border-color: #3A0CA3 !important;
-        color: #3A0CA3 !important;
+        background-color: #EFEDF6 !important;
+        border-color: #4B3F8F !important;
+        color: #4B3F8F !important;
         font-weight: 600 !important;
     }
 
@@ -184,7 +184,7 @@ st.markdown("""
     .ae-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; font-size: 13.5px; color: #55524D; margin: 0.2rem 0 0.4rem 0; }
     .ae-status .ae-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #1F8A4C; margin-right: 7px; vertical-align: 1px; }
     .ae-head { display: flex; flex-direction: column; gap: 8px; margin-bottom: 0.4rem; }
-    .ae-eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #3A0CA3; }
+    .ae-eyebrow { font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #4B3F8F; }
     .ae-title { font-family: 'IBM Plex Serif', Georgia, serif; font-size: 30px; line-height: 1.18; font-weight: 600; letter-spacing: -0.01em; color: #1C1B19; text-wrap: balance; }
     .ae-desc { max-width: 760px; font-size: 16px; line-height: 1.6; color: #55524D; }
     /* On this page: a segmented control with no label, in a muted indigo (mockups P1 and M1 of
@@ -201,12 +201,12 @@ st.markdown("""
     .ae-anchor { scroll-margin-top: 8rem; }
     .ae-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; white-space: nowrap; }
     .ae-tag { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; border: 1px solid #D9D5CC; background: #ffffff; color: #55524D; font-size: 13px; font-weight: 500; white-space: nowrap; }
-    .ae-now { display: inline-flex; padding: 3px 10px; border-radius: 999px; background: #F0EDF8; color: #3A0CA3; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+    .ae-now { display: inline-flex; padding: 3px 10px; border-radius: 999px; background: #EFEDF6; color: #4B3F8F; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
     .ae-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
     .ae-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 0.6rem 0 0.4rem 0; }
     .ae-tile { border: 1px solid #E2DED6; border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 9px; background: #ffffff; }
     .ae-tile-l { font-size: 14px; font-weight: 500; color: #55524D; }
-    .ae-tile-v { font-size: 34px; line-height: 1; font-weight: 700; color: #3A0CA3; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+    .ae-tile-v { font-size: 34px; line-height: 1; font-weight: 700; color: #4B3F8F; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
     .ae-tile-c { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; color: #55524D; }
     .ae-tile-r { padding-top: 9px; border-top: 1px solid #E6E3DC; font-size: 12.5px; line-height: 1.45; color: #55524D; }
     .ae-tile-r b { color: #1C1B19; font-weight: 600; }
@@ -221,12 +221,12 @@ st.markdown("""
     .ae-tbl tbody td:first-child, .ae-tbl tbody td.l { text-align: left; }
     .ae-tbl tbody tr:last-child td { border-bottom: none; }
     .ae-tbl tbody tr:hover td { background: #F5F4F0; }
-    .ae-tbl tbody tr.ae-held td { background: #F0EDF8; }
+    .ae-tbl tbody tr.ae-held td { background: #EFEDF6; }
     .ae-tbl .ae-k { color: #55524D; font-weight: 500; white-space: nowrap; }
     .ae-tbl tr.ae-bold td { font-weight: 700; }
     .ae-tbl tr.ae-bold td.ae-k { color: #1C1B19; font-weight: 600; }
     .ae-tbl td.ae-strat { color: #1C1B19; font-weight: 600; }
-    .ae-tbl tr.ae-bold td.ae-strat { color: #3A0CA3; font-weight: 700; }
+    .ae-tbl tr.ae-bold td.ae-strat { color: #4B3F8F; font-weight: 700; }
     .ae-tbl .ae-date { display: block; font-size: 11.5px; font-weight: 400; color: #6B6B7B; margin-top: 2px; }
     .ae-tbl .ae-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px; }
     .ae-tbl .ae-asset { font-weight: 700; color: #1C1B19; }
@@ -238,7 +238,7 @@ st.markdown("""
     .ae-tbl.ae-tbl-fit .ae-score-b { width: 64px; }
     .ae-tbl.ae-tbl-fit tbody td.l { white-space: nowrap; }
     .ae-tip { position: relative; cursor: help; display: inline-flex; align-items: center; }
-    .ae-tip-i { display: inline-block; width: 15px; height: 15px; line-height: 15px; margin-left: 7px; border-radius: 50%; border: 1px solid #A99FCB; color: #3A0CA3; font-size: 10px; font-weight: 700; font-style: italic; text-align: center; }
+    .ae-tip-i { display: inline-block; width: 15px; height: 15px; line-height: 15px; margin-left: 7px; border-radius: 50%; border: 1px solid #A99FCB; color: #4B3F8F; font-size: 10px; font-weight: 700; font-style: italic; text-align: center; }
     .ae-tip-box { visibility: hidden; opacity: 0; position: absolute; left: 0; top: 135%; z-index: 1000; width: 300px; padding: 10px 12px; background: #1C1B19; color: #ffffff; font-size: 12.5px; font-weight: 400; line-height: 1.45; text-align: left; white-space: normal; border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.18); transition: opacity 0.12s; }
     .ae-tip:hover .ae-tip-box { visibility: visible; opacity: 1; }
     .ae-notes { display: flex; flex-direction: column; border-top: 1px solid #E6E3DC; }
@@ -249,7 +249,7 @@ st.markdown("""
     .ae-hold-t { font-size: 15px; font-weight: 700; color: #1C1B19; }
     .ae-hold-n { display: block; font-size: 12.5px; color: #55524D; }
     .ae-hold-b { height: 12px; border-radius: 999px; background: #F5F4F0; overflow: hidden; }
-    .ae-hold-b span { display: block; height: 100%; border-radius: 999px; background: #3A0CA3; }
+    .ae-hold-b span { display: block; height: 100%; border-radius: 999px; background: #4B3F8F; }
     .ae-hold-w { text-align: right; font-size: 16px; font-weight: 700; color: #1C1B19; font-variant-numeric: tabular-nums; }
     .ae-chg { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid #E6E3DC; }
     .ae-small { font-size: 12.5px; line-height: 1.5; color: #55524D; }
@@ -688,8 +688,8 @@ G1_YIELD_OPTIONS = {
 #   Strategy = brand purple, SPY = muted indigo, 60/40 = brand teal.
 # Categorical colors reuse teal (positive / risk-on) and purple (negative /
 # risk-off), matching the asset class chart convention in app.py.
-BRAND_PURPLE = "#3A0CA3"        # Strategy / primary (hero, matches app.py)
-BRAND_PURPLE_FADE = "#8B7BC9"   # Lightened purple for secondary lines (e.g. 24mo Sortino)
+BRAND_PURPLE = "#4B3F8F"        # Strategy / primary: muted indigo since November 20, 2026 (app.py keeps #3A0CA3)
+BRAND_PURPLE_FADE = "#9189BC"   # Lightened indigo for secondary lines (e.g. 24mo Sortino)
 BRAND_INDIGO = "#9CA3AF"        # SPY / benchmark (neutral gray, matches app.py S&P 500)
 BRAND_BLUE = "#4361EE"          # 80/20 benchmark (matches app.py)
 BRAND_CYAN = "#4CC9F0"          # 60/40 benchmark (matches app.py)
@@ -698,7 +698,7 @@ BRAND_STEEL = "#6A9BAD"         # Legacy steel blue-green (retained for referenc
 BRAND_RED = "#C0392B"           # Loss / drawdown / risk-off semantic (matches app.py)
 BRAND_GRAY = "#A8A8A8"          # Neutral / reference lines
 BRAND_TEXT = "#484848"          # Charcoal text
-BRAND_HIGHLIGHT_BG = "#F0EDF8"  # Light purple tint for selected table rows
+BRAND_HIGHLIGHT_BG = "#EFEDF6"  # Light purple tint for selected table rows
 
 # ---- Balanced benchmarks ----
 # Benchmarks shown alongside SPY in the equity, drawdown, and metrics
@@ -4009,13 +4009,13 @@ def ae_drawdown(w):
 # The drawdown chart's lines look like the Chart Dashboard's Drawdowns Over Time chart (app.py DD_LINE, DD_DASH,
 # DD_WIDTH, DD_TEXT). Each entry: line color, dash, width, label color.
 AE_DD_LOOK = {
-    "Strategy": ("#3A0CA3", None, 2.4, "#3A0CA3"),
+    "Strategy": ("#4B3F8F", None, 2.4, "#4B3F8F"),
     "80/20": ("#4361EE", "7px,4px", 2.0, "#3451D1"),
     "60/40": ("#4CC9F0", "3px,4px", 2.6, "#0B7AA3"),
     "S&P 500": ("#6B7280", "11px,4px,3px,4px", 2.0, "#4B5563"),
 }
 # The strategy's fill is lightest at 0% and darkest at its deepest point (gradient stop 0 is the lowest value).
-AE_DD_FILL = [[0.0, "rgba(58,12,163,0.26)"], [1.0, "rgba(58,12,163,0.04)"]]
+AE_DD_FILL = [[0.0, "rgba(75,63,143,0.26)"], [1.0, "rgba(75,63,143,0.04)"]]
 
 
 def ae_dd_look(name, color):
@@ -5432,14 +5432,14 @@ RC_CSS = "".join([
     ".rc-strong{font-weight:600;color:#1C1B19}",
     ".rc-muted{color:#55524D}",
     ".rc-small{font-size:13px;color:#55524D}",
-    ".rc-cmp{display:flex;flex-direction:column;gap:10px;padding:16px 18px;border:1px solid #D9D2F3;background:#F0EDF8;border-radius:10px}",
+    ".rc-cmp{display:flex;flex-direction:column;gap:10px;padding:16px 18px;border:1px solid #D6D1E8;background:#EFEDF6;border-radius:10px}",
     ".rc-lead{font-family:'IBM Plex Serif',Georgia,serif;font-size:20px;line-height:1.45;font-weight:500;color:#1C1B19;max-width:880px}",
     ".rc-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}",
     ".rc-tile{border:1px solid #E2DED6;border-radius:10px;padding:18px 20px;display:flex;flex-direction:column;gap:12px}",
     ".rc-nums{display:flex;flex-direction:column;gap:10px}",
     ".rc-num{display:flex;flex-direction:column;gap:2px}",
     ".rc-big{font-size:28px;line-height:1.1;font-weight:700;color:#1C1B19}",
-    ".rc-big-p{font-size:28px;line-height:1.1;font-weight:700;color:#3A0CA3}",
+    ".rc-big-p{font-size:28px;line-height:1.1;font-weight:700;color:#4B3F8F}",
     ".rc-h3{font-family:'IBM Plex Serif',Georgia,serif;font-size:21px;font-weight:600;color:#1C1B19}",
     ".rc-h4{font-family:'IBM Plex Serif',Georgia,serif;font-size:17px;font-weight:600;color:#1C1B19}",
     ".rc-sec{display:flex;flex-direction:column;gap:12px}",
@@ -5450,7 +5450,7 @@ RC_CSS = "".join([
     ".rc-table tbody td:first-child{text-align:left;color:#55524D;font-weight:500}",
     ".rc-table tbody td:last-child{text-align:left}",
     ".rc-table tbody td.rc-t{font-weight:700;color:#1C1B19}",
-    ".rc-table tbody td.rc-r{font-weight:600;color:#3A0CA3}",
+    ".rc-table tbody td.rc-r{font-weight:600;color:#4B3F8F}",
     ".rc-card{border:1px solid #E2DED6;border-radius:10px;padding:20px 22px;display:flex;flex-wrap:wrap;gap:20px 36px}",
     ".rc-left{flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:10px}",
     ".rc-right{flex:1.4 1 420px;min-width:0;display:flex;flex-direction:column;gap:8px}",
@@ -5469,7 +5469,7 @@ RC_CSS = "".join([
     ".rc-gr{font-size:13px;color:#55524D;display:flex;align-items:center}",
     ".rc-cell{min-height:58px;border-radius:8px;border:2px solid transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#1C1B19;cursor:help}",
     ".rc-cell-v{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}",
-    ".rc-tag{font-size:11px;font-weight:700;color:#3A0CA3;text-transform:uppercase;letter-spacing:0.04em;min-height:14px}",
+    ".rc-tag{font-size:11px;font-weight:700;color:#4B3F8F;text-transform:uppercase;letter-spacing:0.04em;min-height:14px}",
     ".rc-hb{display:grid;grid-template-columns:minmax(120px,240px) minmax(0,1fr) 44px;gap:12px;align-items:center}",
     ".rc-hb-n{color:#1C1B19}",
     ".rc-hb-s{display:block;font-size:12px;color:#55524D}",
@@ -5555,7 +5555,7 @@ def rc_render_html(A, settings, stats, cmp=None):
         if T["ref"] is not None:
             h.append(f'<div class="rc-ref" style="bottom:{T["ref"]}px"></div>')
         for d in T["days"]:
-            fill = "#3A0CA3" if d["cur"] else "#8F7AD6"
+            fill = "#4B3F8F" if d["cur"] else "#948CC0"
             h.append(f'<div class="rc-col" title="{esc(d["tip"])}"><span class="rc-col-l">{esc(d["label"])}</span>'
                      f'<span class="rc-col-b" style="height:{d["h"]}px;background:{fill}"></span></div>')
         h.append('</div><div class="rc-axis">'
@@ -5584,7 +5584,7 @@ def rc_render_html(A, settings, stats, cmp=None):
                 if c is None:
                     h.append("<span></span>")
                     continue
-                border = "#3A0CA3" if c["cur"] else "transparent"
+                border = "#4B3F8F" if c["cur"] else "transparent"
                 h.append(f'<div class="rc-cell" title="{esc(c["tip"])}" style="background:{c["bg"]};border-color:{border}">'
                          f'<span class="rc-cell-v">{esc(c["v"])}</span><span class="rc-tag">{"current" if c["cur"] else ""}</span></div>')
         h.append("</div></div></div>")
@@ -5595,7 +5595,7 @@ def rc_render_html(A, settings, stats, cmp=None):
                  f'<div>{esc(ax["text"])}</div></div><div class="rc-right" style="gap:10px">'
                  f'<span class="rc-small">{esc(ax["caption"])}</span>')
         for b in ax["bars"]:
-            fill = "#3A0CA3" if b["cur"] else "#8F7AD6"
+            fill = "#4B3F8F" if b["cur"] else "#948CC0"
             sub = f'<span class="rc-hb-s">{esc(b["sub"])}</span>' if b["sub"] else ""
             tag = ' <span class="rc-tag">current</span>' if b["cur"] else ""
             h.append(f'<div class="rc-hb"><span class="rc-hb-n">{esc(b["name"])}{tag}{sub}</span>'
