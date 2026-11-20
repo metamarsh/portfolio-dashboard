@@ -5663,6 +5663,671 @@ def rc_show_panel(daily_prices, monthly_prices, params, results_df, daily_equity
 
 
 # =============================================================================
+# DEFAULT SETTINGS COMPARISON  (added November 20, 2026)
+# =============================================================================
+# Tyler's request of that day: hold the result of a run on all default
+# settings and, when a setting changes, compare the new result with it
+# automatically. Until then he ran the defaults over a period, took a
+# screenshot, changed a setting and ran again.
+#
+# After a run whose settings differ from the app's starting ones, the same
+# period is run on the starting settings ("the default run"), and a card at
+# the top of the Overview tab shows the two side by side: what changed, each
+# run's headline figures and the change in every one, flagged green, red or
+# gray. The Performance Summary gains a Default settings column. When the
+# Reality Check is on, the card also compares the two runs' nearby settings
+# (the Reality Check's neighbors' average), because one run's gain can be the
+# luck of the exact setting.
+#
+#   Default settings   the DS_* constants below, which the sidebar's widgets
+#                      read as their starting values, with position sizing,
+#                      trading cost and the Backfill Rules at their own
+#                      defaults, leverage off and the G1 cash rule off
+#   The default run    run_backtest on those settings, over the run's own
+#                      period, on prices built by the default Backfill Rules
+#
+# The default run is saved in reality_check_cache\ under its settings, a
+# fingerprint of its prices and a stamp of this file, so it runs once for a
+# period and is reused until the prices behind it or this file change (on the
+# day a month closes it is run fresh each time; see ds_month_closing). A run
+# that is itself on the default settings is saved the same way. Nothing here
+# changes the run's own results, trade log, results log or Reality Check,
+# and unticking "Compare with the default settings" in the sidebar switches
+# all of it off.
+#
+# Build and checks:
+# C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System\Backtest Engine\Default Settings Compare 2026-11-20\
+
+# The app's starting settings. The sidebar's widgets read these, so the
+# default run and a run made without touching the sidebar cannot drift apart.
+# To change a starting value, change it here.
+DS_MAIN_LOOKBACK = "2/8-month blend (50/50)"
+DS_FINAL_TOP_N = 4
+DS_EXEC_OFFSET = 1                     # the last trading day of the month (see rc_exec_label)
+DS_VOL_MONTHS = 12
+DS_FIXED = ["TLT", "GLDM", "BIL", "BTAL", "HGER", "IBIT"]
+DS_EQUITY = ["QQQ", "IWM", "DXJ", "EMXC"]
+DS_EQUITY_TOP_N = 3
+DS_EQUITY_LOOKBACK = "1/3-month blend (50/50)"
+
+DS_TITLE = "Compared with the default settings"
+DS_COLUMN = "Default settings"         # the default run's name on the page
+DS_BAND = 0.05                         # a Sortino change smaller than this reads as about the same
+DS_AGREE = 0.4                         # nearby settings agree when their average moved the same way, by at least
+#                                        this share of the change as tested (and by at least DS_BAND)
+DS_CACHE_FILE = os.path.join(RC_CACHE_DIR, "default_settings_runs.pkl")
+DS_CACHE_MAX = 12                      # saved default runs kept, about 0.4 MB each (the oldest go first)
+# The card's rows: label, compute_metrics key, kind ("ratio", "pct" or "dd"),
+# the smallest change that gets a color (in the units the pill shows: ratio
+# points, or percentage points), and whether a higher figure is better (None:
+# the change is shown without a color). The first three are drawn in bold.
+DS_ROWS = [
+    ("Sortino ratio", "Sortino Ratio", "ratio", DS_BAND, True),
+    ("Return a year (CAGR)", "CAGR", "pct", 0.25, True),
+    ("Max drawdown, daily", "Max Drawdown (Daily)", "dd", 0.5, True),
+    ("Max drawdown, month-end", "Max Drawdown", "dd", 0.5, True),
+    ("Martin ratio", "Martin Ratio", "ratio", 0.10, True),
+    ("Calmar ratio", "Calmar Ratio", "ratio", 0.05, True),
+    ("Volatility a year", "Annualized Vol", "pct", None, None),
+    ("Worst year", "Worst Year", "pct", 0.5, True),
+]
+DS_BOLD = ("Sortino Ratio", "CAGR", "Max Drawdown (Daily)")
+
+
+# ---- the default settings ---------------------------------------------------
+
+def ds_default_backfill_rules():
+    """The Backfill Rules of a run with no row edited, in the order the app applies them: the sidebar's
+    default rows (BACKFILL_DEFAULTS), then the balanced benchmarks' chains and the S&P 500 line's."""
+    rules = {}
+    for primary, chain in BACKFILL_DEFAULTS:
+        primary = primary.strip().upper()
+        chain = [t.strip().upper() for t in chain.split(",") if t.strip()]
+        if primary and chain:
+            rules[primary] = chain
+    for cfg in BAL_BENCHMARKS:
+        if cfg.get("backfill"):
+            rules[cfg["ticker"]] = [t.strip().upper() for t in cfg["backfill"]]
+    if BENCHMARK_BACKFILL and BENCHMARK_TICKER not in rules:
+        rules[BENCHMARK_TICKER] = list(BENCHMARK_BACKFILL)
+    return rules
+
+
+def ds_default_tickers():
+    """Every ticker a default run downloads: its funds, the benchmark lines, the calendar anchor and every
+    Backfill Rules source."""
+    need = list(DS_FIXED) + list(DS_EQUITY) + [BENCHMARK_TICKER, "BIL", CALENDAR_TICKER]
+    need += [c["ticker"] for c in BAL_BENCHMARKS]
+    for chain in ds_default_backfill_rules().values():
+        need.extend(chain)
+    return sorted(set(need))
+
+
+def ds_default_params(backtest_start, backtest_end=""):
+    """run_backtest's params for the default settings over a period, as the sidebar builds them at startup."""
+    main_lbs, main_w = MAIN_LOOKBACK_OPTIONS[DS_MAIN_LOOKBACK]
+    eq_lbs, eq_w = EQUITY_LOOKBACK_OPTIONS[DS_EQUITY_LOOKBACK]
+    rules = ds_default_backfill_rules()
+    return {
+        "fixed_tickers": [t for t in DEFAULT_FIXED_ASSETS if t in DS_FIXED],
+        "equity_tickers": [t for t in DEFAULT_EQUITY_ETFS if t in DS_EQUITY],
+        "equity_top_n": DS_EQUITY_TOP_N,
+        "equity_lookbacks": eq_lbs,
+        "equity_lookback_weights": eq_w,
+        "equity_lookback_label": DS_EQUITY_LOOKBACK,
+        "main_lookbacks": main_lbs,
+        "main_lookback_weights": main_w,
+        "main_lookback_label": DS_MAIN_LOOKBACK,
+        "final_top_n": DS_FINAL_TOP_N,
+        "vol_months": DS_VOL_MONTHS,
+        "sizing": SIZING_DEFAULT,
+        "exec_timing": {1: "last_day", 0: "first_day"}.get(DS_EXEC_OFFSET, "offset"),
+        "exec_timing_label": rc_exec_label(DS_EXEC_OFFSET),
+        **({"signal_offset": DS_EXEC_OFFSET} if DS_EXEC_OFFSET not in (0, 1) else {}),
+        # The sidebar's box holds the cost in percent and hands it back divided by 100.
+        "cost_per_side": (DEFAULT_COST_PER_SIDE * 100) / 100.0,
+        "backtest_start": backtest_start,
+        "backtest_end": backtest_end,
+        "backfill_summary": "; ".join(f"{k} <- {', '.join(v)}" for k, v in rules.items()) if rules else "None",
+        "leverage_params": {"enabled": False},
+        "g1": {"enabled": False},
+    }
+
+
+def ds_default_line():
+    """The default settings in one line, for the card's footnote."""
+    p = ds_default_params("")
+    eq = ""
+    if p["equity_top_n"] > 0:
+        eq = (f" and the top {p['equity_top_n']} of {', '.join(p['equity_tickers'])} on the "
+              f"{rc_lb_name(p['equity_lookbacks'])}-month lookback")
+    return (f"the {rc_lb_name(p['main_lookbacks'])}-month lookback, {p['final_top_n']} holdings, "
+            f"{rc_sizing_name(p['sizing']).lower()} on a {p['vol_months']}-month window, trades on the "
+            f"{rc_trade_noun(rc_current_offset(p))}, {p['cost_per_side']:.2%} cost per side, "
+            f"{', '.join(p['fixed_tickers'])}{eq}")
+
+
+def ds_lev_text(lev):
+    """A leverage setting in a word or two."""
+    if not lev or not lev.get("enabled"):
+        return "off"
+    method = lev.get("method")
+    if method == "constant":
+        return f"constant {float(lev.get('mult_constant', 1.25)):.2f}x"
+    if method == "holdings_gate":
+        return f"holdings gate {float(lev.get('mult_leveraged', 1.25)):.2f}x"
+    if method == "vt_trend":
+        return f"{lev.get('ticker', 'VT')} trend"
+    return "on"
+
+
+def ds_signature(params, rules):
+    """Everything that decides a run's results except its period, as text. Two runs with the same signature
+    over the same period and prices are the same backtest."""
+    lev = params.get("leverage_params") or {}
+    g1 = params.get("g1") or {}
+    n_eq = int(params.get("equity_top_n", 0))
+    return json.dumps(_rc_plain({
+        "fixed": list(params.get("fixed_tickers", [])),
+        "equity": list(params.get("equity_tickers", [])) if n_eq > 0 else [],
+        "equity_top_n": n_eq,
+        "equity_lb": ([list(params.get("equity_lookbacks", [])), list(params.get("equity_lookback_weights", []))]
+                      if n_eq > 0 else []),
+        "main_lb": [list(params["main_lookbacks"]), list(params["main_lookback_weights"])],
+        "top_n": int(params["final_top_n"]),
+        "vol": int(params["vol_months"]),
+        "sizing": params.get("sizing", SIZING_IF_UNSET),
+        "day": rc_current_offset(params),
+        "cost": params.get("cost_per_side", DEFAULT_COST_PER_SIDE),
+        "leverage": lev if lev.get("enabled") else {},
+        "g1": {k: v for k, v in g1.items() if k != "yield_series"} if g1.get("enabled") else {},
+        "rules": [[k, list(v)] for k, v in rules.items()],
+    }), sort_keys=True)
+
+
+def ds_changes(params, rules, base_params, base_rules):
+    """What a run changed from the default settings, as short phrases in sidebar order (none for a default run)."""
+    out = []
+
+    def moved(name, a, b, unit=""):
+        if a != b:
+            out.append(f"{name} {a} \u2192 {b}{unit}")
+
+    def lookback(name, key):
+        a = (list(base_params[key + "s"]), [round(float(x), 6) for x in base_params[key + "_weights"]])
+        b = (list(params[key + "s"]), [round(float(x), 6) for x in params[key + "_weights"]])
+        if a == b:
+            return
+        if a[0] != b[0]:
+            out.append(f"{name} {rc_lb_name(a[0])} \u2192 {rc_lb_name(b[0])} months")
+        else:
+            out.append(f"{name} {base_params.get(key + '_label', '')} \u2192 {params.get(key + '_label', '')}")
+
+    def funds(name, a, b):
+        added = [t for t in b if t not in a]
+        gone = [t for t in a if t not in b]
+        if added or gone:
+            out.append(name + " " + ", ".join(["+" + t for t in added] + ["\u2212" + t for t in gone]))
+        elif list(a) != list(b):
+            out.append(name + " in a different order")
+
+    lookback("Main lookback", "main_lookback")
+    moved("Holdings", int(base_params["final_top_n"]), int(params["final_top_n"]))
+    moved("Trade day", rc_trade_noun(rc_current_offset(base_params)), rc_trade_noun(rc_current_offset(params)))
+    moved("Position sizing", rc_sizing_name(base_params.get("sizing", SIZING_IF_UNSET)).lower(),
+          rc_sizing_name(params.get("sizing", SIZING_IF_UNSET)).lower())
+    moved("Volatility window", int(base_params["vol_months"]), int(params["vol_months"]), " months")
+    moved("Trading cost", f"{float(base_params.get('cost_per_side', DEFAULT_COST_PER_SIDE)):.2%}",
+          f"{float(params.get('cost_per_side', DEFAULT_COST_PER_SIDE)):.2%}", " per side")
+    moved("Leverage", ds_lev_text(base_params.get("leverage_params")), ds_lev_text(params.get("leverage_params")))
+    g1 = params.get("g1") or {}
+    if g1.get("enabled"):
+        out.append("G1 cash rule off \u2192 on")
+    funds("Fixed basket", base_params["fixed_tickers"], params["fixed_tickers"])
+    n_base, n_run = int(base_params["equity_top_n"]), int(params["equity_top_n"])
+    moved("Equity picks", n_base, n_run)
+    if n_run > 0:
+        funds("Equity funds", base_params["equity_tickers"], params["equity_tickers"])
+        lookback("Equity lookback", "equity_lookback")
+    hist = []
+    for k in dict.fromkeys(list(rules) + list(base_rules)):
+        if rules.get(k) == base_rules.get(k) or (g1.get("enabled") and k == g1.get("fund") and k not in base_rules):
+            continue
+        hist.append(f"{k} history from {', '.join(rules[k])}" if k in rules else f"{k} with no backfill")
+    if len(hist) > 3:
+        hist = hist[:3] + [f"{len(hist) - 3} more fund histories"]
+    out.extend(hist)
+    if not hist and [k for k in rules if k in base_rules] != list(base_rules):
+        out.append("Backfill Rules in a different order")
+    return out
+
+
+# ---- the default run's prices -----------------------------------------------
+
+def ds_plan_prices(daily_prices, run_rules, extra=()):
+    """How the default run gets its price table, decided before the run's own Backfill Rules are applied.
+
+    daily_prices is the run's table as downloaded, with the default run's own tickers (extra: the ones the
+    run itself did not need) still in it. Returns {"cols", "share", "raw"}. share: the run's finished table
+    can serve, read through the default run's columns, because the run has every default ticker of its
+    own, builds each of them by the default rules, and trades on the same calendar. Otherwise raw holds a
+    copy of the default run's columns, taken now, for ds_build_prices. Raises when a default ticker has no
+    prices.
+    """
+    want = ds_default_tickers()
+    missing = [c for c in want if c not in daily_prices.columns or daily_prices[c].dropna().empty]
+    if missing:
+        raise MissingPriceDataError("no prices for " + ", ".join(missing))
+    base_rules = ds_default_backfill_rules()
+    share = False
+    if not extra:
+        mine = [(k, list(v)) for k, v in run_rules.items() if k in base_rules]
+        others = [k for k in run_rules if k not in base_rules]
+        share = (mine == [(k, list(v)) for k, v in base_rules.items()]
+                 and not any(k in want for k in others)
+                 and market_trading_dates(daily_prices).equals(market_trading_dates(daily_prices[want])))
+    return {"cols": want, "share": share, "raw": None if share else daily_prices[want].copy()}
+
+
+def ds_build_prices(raw_prices, rules):
+    """The default Backfill Rules applied to raw prices, as the app applies a run's own."""
+    daily = raw_prices.copy()
+    for primary, chain in rules.items():
+        if primary in daily.columns or any(bf in daily.columns for bf in chain):
+            spliced, _segments = build_backfilled_series(
+                daily, primary, chain,
+                fee_annual=BACKFILL_FEE_ANNUAL.get(primary, 0.0),
+                primary_from=PRIMARY_HISTORY_FROM.get(primary),
+                source_from=BACKFILL_SOURCE_FROM.get(primary),
+            )
+            daily[primary] = spliced
+    return daily
+
+
+def ds_finish_prices(plan, run_daily):
+    """The default run's daily and month-end prices, once the run's own table is finished (see ds_plan_prices)."""
+    if plan["share"]:
+        daily = run_daily[plan["cols"]]
+    else:
+        daily = ds_build_prices(plan["raw"], ds_default_backfill_rules())
+    return daily, get_month_end_prices(daily)
+
+
+# ---- the saved default runs -------------------------------------------------
+
+def ds_cache_load():
+    try:
+        with open(DS_CACHE_FILE, "rb") as fh:
+            cache = _rc_pickle.load(fh)
+        return cache if isinstance(cache, dict) else {}
+    except Exception:
+        return {}
+
+
+def ds_cache_save(cache):
+    """Write the saved default runs (oldest dropped past DS_CACHE_MAX). Never raises."""
+    try:
+        if len(cache) > DS_CACHE_MAX:
+            keep = sorted(cache, key=lambda k: cache[k].get("t", 0.0))[-DS_CACHE_MAX:]
+            for k in set(cache) - set(keep):
+                del cache[k]
+        os.makedirs(RC_CACHE_DIR, exist_ok=True)
+        tmp = DS_CACHE_FILE + ".tmp"
+        with open(tmp, "wb") as fh:
+            _rc_pickle.dump(cache, fh, protocol=4)
+        os.replace(tmp, DS_CACHE_FILE)
+        return True
+    except Exception:
+        return False
+
+
+def ds_engine_stamp():
+    """A short hash of this file, so a saved default run is not reused after the engine's code changes."""
+    try:
+        with open(RC_ENGINE_FILE, "rb") as fh:
+            return _rc_hashlib.sha1(fh.read()).hexdigest()[:12]
+    except Exception:
+        return "unknown"
+
+
+def ds_keys(base_daily, base_params):
+    """Two keys for the default run on these prices and this period: the one the Reality Check saves it
+    under (as the center of a default run's own check), and this section's own, which adds the file stamp."""
+    base = rc_base_key(base_params, rc_fingerprint(base_daily, base_params, rc_price_cut(base_daily, base_params)))
+    rc_k = rc_key(base, rc_spec(base_params))
+    return rc_k, _rc_hashlib.sha1((rc_k + "|" + ds_engine_stamp()).encode("utf-8")).hexdigest()
+
+
+def ds_month_closing(daily_prices):
+    """True when the prices end on the last calendar day of a month.
+
+    On that day a run that trades on the last trading day (the default settings' trade day) already counts
+    the month, on a close that may still change, while rc_fingerprint, which the saved runs are keyed by,
+    moves only once the prices reach the next month. So a default run made on such a day is neither read
+    from the saved runs nor saved: it is run again each time, on the prices the run itself reads.
+    """
+    dates = market_trading_dates(daily_prices)
+    if len(dates) == 0:
+        return False
+    last = dates[-1]
+    return (last + pd.Timedelta(days=1)).month != last.month
+
+
+def ds_held(trade_df):
+    """Each hold month's funds, read from a trade log: {"YYYY-MM": frozenset of tickers}."""
+    out = {}
+    if trade_df is None or len(trade_df) == 0 or "final_holdings" not in trade_df.columns:
+        return out
+    for month, text in zip(trade_df["hold_month"], trade_df["final_holdings"]):
+        out[str(month)] = frozenset(part.split(":")[0].strip() for part in str(text).split(" | ") if ":" in part)
+    return out
+
+
+def ds_entry(monthly_returns, trade_df, daily_equity, rf_monthly):
+    """What is kept of a default run: the Reality Check's entry (monthly returns and three headline
+    figures), plus its daily equity curve and each month's funds."""
+    r = monthly_returns.dropna().astype(float)
+    m = compute_metrics(r, rf_monthly=rf_monthly, daily_equity=daily_equity) if len(r) else {}
+
+    def num(key):
+        v = m.get(key, np.nan)
+        return float(v) if isinstance(v, (int, float, np.floating, np.integer)) else np.nan
+
+    return {"r": r, "S": num("Sortino Ratio"), "C": num("CAGR"), "D": num("Max Drawdown (Daily)"),
+            "t": _rc_time.time(), "deq": daily_equity, "held": ds_held(trade_df)}
+
+
+def ds_get_run(base_daily, base_monthly, base_params, rf_monthly):
+    """The default run for these prices and this period: read from the saved runs, or run now and saved.
+    Returns (entry, run just now, the Reality Check's key for it)."""
+    rc_k, key = ds_keys(base_daily, base_params)
+    saved = not ds_month_closing(base_daily)
+    cache = ds_cache_load() if saved else {}
+    entry = cache.get(key)
+    if isinstance(entry, dict) and "deq" in entry and "r" in entry:
+        return entry, False, rc_k
+    p = dict(base_params)
+    p["fast_daily"] = True    # the same daily curve as the day-by-day loop, bit for bit, in half the time
+    res, trades, deq = run_backtest(base_daily, base_monthly, p)
+    r = res["portfolio_return"] if len(res) else pd.Series(dtype=float)
+    entry = ds_entry(r, trades, deq, rf_monthly)
+    if saved and len(entry["r"]):
+        cache[key] = entry
+        ds_cache_save(cache)
+    return entry, True, rc_k
+
+
+# ---- comparing the two runs -------------------------------------------------
+
+def ds_compare(run_r, run_deq, run_metrics, run_held, entry, rf_run=None, rf_base=None):
+    """This run against the default run over the months both cover. None when they share no month.
+
+    When the two cover the same months, the run's figures are the Performance Summary's own (run_metrics)
+    and the default run's are compute_metrics on all of it. When they do not (a start the default settings
+    cannot reach, or a trade day whose last month is not finished), both are worked out again on the
+    shared months, with each daily curve cut to them the way run_backtest cuts one to a period.
+    """
+    a = run_r.dropna().astype(float)
+    b = entry["r"]
+    common = a.index.intersection(b.index)
+    if len(common) == 0:
+        return None
+    same = len(common) == len(a) == len(b)
+
+    def cut(deq):
+        if deq is None or len(deq) == 0:
+            return deq
+        lo = pd.Timestamp(year=common[0].year, month=common[0].month, day=1)
+        return deq[(deq.index >= lo) & (deq.index <= common[-1])]
+
+    if same:
+        m_a = run_metrics
+        m_b = compute_metrics(b, rf_monthly=rf_base, daily_equity=entry.get("deq"))
+    else:
+        m_a = compute_metrics(a.loc[common], rf_monthly=rf_run, daily_equity=cut(run_deq))
+        m_b = compute_metrics(b.loc[common], rf_monthly=rf_base, daily_equity=cut(entry.get("deq")))
+    months = [d.strftime("%Y-%m") for d in common]
+    held_b = entry.get("held") or {}
+    both = [m for m in months if m in run_held and m in held_b]
+    return {
+        "same": same, "n": len(common), "first": common[0], "last": common[-1],
+        "run": m_a, "base": m_b,
+        "held_n": len(both), "held_diff": sum(1 for m in both if run_held[m] != held_b[m]),
+        # With a different number of funds held, every month differs, and the count says nothing.
+        "held_same_count": bool(both) and (float(np.median([len(run_held[m]) for m in both]))
+                                           == float(np.median([len(held_b[m]) for m in both]))),
+        "identical": bool(same and np.allclose(a.values, b.values, rtol=0.0, atol=1e-12)),
+    }
+
+
+def ds_prepare(params, run_rules, plan, run_daily, strat_returns, strat_metrics, daily_equity, trade_df,
+               rf_monthly, error=None):
+    """Everything the Overview's comparison card needs for one finished run.
+
+    Returns a dict. default: the run is itself on the default settings (it is then saved as the default
+    run for its period). error: why there is no comparison. changes: what the run changed (ds_changes).
+    cmp: ds_compare's result. base: the default run's prices, params and saved entry, for the Reality
+    Check's nearby settings (ds_nearby). fresh: the default run was run just now, not read from the saved runs.
+    """
+    state = {"on": True, "default": False, "error": error, "changes": [], "cmp": None, "base": None,
+             "fresh": False}
+    base_rules = ds_default_backfill_rules()
+    end = params.get("backtest_end", "")
+    own = ds_default_params(params["backtest_start"], end)
+    state["default"] = ds_signature(params, run_rules) == ds_signature(own, base_rules)
+    if state["default"]:
+        # A default run is the default run for its period: save it, so a changed setting finds it.
+        try:
+            if (plan is not None and plan["share"] and len(strat_returns.dropna()) > 0
+                    and not ds_month_closing(run_daily[plan["cols"]])):
+                _rc_k, key = ds_keys(run_daily[plan["cols"]], own)
+                cache = ds_cache_load()
+                if key not in cache:
+                    cache[key] = ds_entry(strat_returns, trade_df, daily_equity, rf_monthly)
+                    ds_cache_save(cache)
+        except Exception:
+            pass
+        return state
+    if error or plan is None:
+        state["error"] = error or "Its prices were not prepared."
+        return state
+    # The default settings cannot start before their own lookback and volatility window allow.
+    start = max(str(params["backtest_start"]),
+                earliest_backtest_start(MAIN_LOOKBACK_OPTIONS[DS_MAIN_LOOKBACK][0], DS_VOL_MONTHS))
+    base_params = ds_default_params(start, end)
+    state["changes"] = (ds_changes(params, run_rules, base_params, base_rules)
+                        or ["A setting this card does not name"])
+    base_daily, base_monthly = ds_finish_prices(plan, run_daily)
+    rf_base = base_monthly["BIL"].pct_change() if "BIL" in base_monthly.columns else None
+    entry, fresh, rc_k = ds_get_run(base_daily, base_monthly, base_params, rf_base)
+    state["fresh"] = fresh
+    state["base"] = {"daily": base_daily, "monthly": base_monthly, "params": base_params, "rf": rf_base,
+                     "entry": entry, "rc_key": rc_k}
+    state["cmp"] = ds_compare(strat_returns, daily_equity, strat_metrics, ds_held(trade_df), entry,
+                              rf_monthly, rf_base)
+    if state["cmp"] is None:
+        state["error"] = "The default settings have no results in the months this run covers."
+    return state
+
+
+def ds_nearby(state, A, progress=None):
+    """The Reality Check's nearby settings for both runs: the average Sortino over the main lookback a month
+    either way on each leg, traded on the same day and the days either side (rc_plan's "block", up to 27
+    runs each). This run's average is the panel's own (A["near_S"]). The default run's block goes through
+    the Reality Check's saved runs and worker pool, under the keys a default run's own check uses, so
+    whichever comes first saves the other the work. Returns {"run", "base", "n_run", "n_base", "fresh"}.
+    """
+    base = state["base"]
+    plan = rc_plan(base["params"])
+    specs = list(dict.fromkeys(plan["block"]))
+    cache = rc_cache_load()
+    if base["rc_key"] not in cache:
+        cache[base["rc_key"]] = {k: base["entry"][k] for k in ("r", "S", "C", "D", "t")}
+    runs, stats = rc_compute_other(base["daily"], base["monthly"], base["params"], specs, base["rf"],
+                                   cache=cache, progress=progress)
+    if stats["fresh"]:
+        rc_cache_save(cache)
+    vals = [float(runs[s]["S"]) for s in specs if s in runs and np.isfinite(runs[s]["S"])]
+    return {"run": float(A["near_S"]), "base": float(np.mean(vals)) if vals else np.nan,
+            "n_run": int(A["block_n"]), "n_base": len(vals), "fresh": int(stats["fresh"])}
+
+
+# ---- drawing the card -------------------------------------------------------
+
+def ds_change_pill(a, b, kind, band, better):
+    """The change from the default run's figure (b) to this run's (a) as a pill: green when it is better by
+    at least the row's band, red when worse by as much, gray inside the band or for a row with no better way."""
+    if a is None or b is None or not (np.isfinite(a) and np.isfinite(b)):
+        return ""
+    # The change is worked out from the two figures as the card shows them (two decimals), so the
+    # arithmetic on the card always adds up.
+    if kind == "dd":                      # drawdowns are negative; shallower is better
+        d = round(round(abs(b) * 100, 2) - round(abs(a) * 100, 2), 2)
+        text = "same" if d == 0 else f"{abs(d):.2f} pts {'shallower' if d > 0 else 'deeper'}"
+    elif kind == "pct":
+        d = round(round(a * 100, 2) - round(b * 100, 2), 2)
+        text = "same" if d == 0 else ae_neg(f"{d:+.2f} pts")
+    else:
+        d = round(round(a, 2) - round(b, 2), 2)
+        text = "same" if d == 0 else ae_neg(f"{d:+.2f}")
+    if better is None or band is None or abs(d) < band:
+        return ae_pill(text, "neutral")
+    return ae_pill(text, "good" if (d > 0) == bool(better) else "bad")
+
+
+def ds_verdict(a, b, near=None, band=DS_BAND):
+    """The card's headline read of this run's Sortino (a) against the default run's (b): (tone, pill text,
+    sentence). near is (this run's nearby average, the default run's) once the Reality Check has them.
+
+    As tested alone, a change of at least `band` reads higher or lower. With the nearby averages, it reads
+    as a real difference only when they moved the same way by at least DS_AGREE of the change as tested
+    (and by at least `band`); otherwise the change is put down to the exact setting. Changes are worked
+    out from the figures as the card shows them (two decimals), like the pills.
+    """
+    if not (np.isfinite(a) and np.isfinite(b)):
+        return "neutral", "No Sortino to compare", "One of the two runs has no Sortino ratio, so there is no read."
+    d = round(round(a, 2) - round(b, 2), 2)
+    flat = abs(d) < band
+    same_text = f"Sortino is about the same as the default settings as tested ({_rc_f2(b)} against {_rc_f2(a)})"
+    moved_text = (f"Sortino is {_rc_f2(abs(d))} {'higher' if d > 0 else 'lower'} than the default settings as "
+                  f"tested ({_rc_f2(b)} to {_rc_f2(a)})")
+    if near is None or not (np.isfinite(near[0]) and np.isfinite(near[1])):
+        if flat:
+            return "neutral", "About the same", same_text + "."
+        if d > 0:
+            return "good", "Higher Sortino as tested", moved_text + "."
+        return "bad", "Lower Sortino as tested", moved_text + "."
+    dn = round(round(near[0], 2) - round(near[1], 2), 2)
+    near_text = f"the average of nearby settings moved {_rc_signed(dn)} ({_rc_f2(near[1])} to {_rc_f2(near[0])})"
+    if flat:
+        if abs(dn) < band:
+            return "neutral", "About the same", f"{same_text}, and {near_text}."
+        return ("neutral", "Same as tested, nearby settings " + ("better" if dn > 0 else "worse"),
+                f"{same_text}, but {near_text}.")
+    if (dn > 0) == (d > 0) and abs(dn) >= max(band, DS_AGREE * abs(d)):
+        return (("good", "Better, and nearby settings agree") if d > 0 else ("bad", "Worse, and nearby settings agree")) + (
+            f"{moved_text}, and {near_text}, so this looks like a real difference and not only the exact setting.",)
+    return ("warn", ("Better" if d > 0 else "Worse") + " as tested only",
+            f"{moved_text}, but {near_text}, so most of the {'gain' if d > 0 else 'drop'} is the luck of the "
+            f"exact setting.")
+
+
+def ds_card_html(state, near=None, rc="off"):
+    """The Overview's comparison card as one HTML string (no blank lines, so Markdown leaves it alone).
+
+    near: ds_nearby's result, once the Reality Check has finished. rc: "off" (the Reality Check is off for
+    this run), "wait" (it is still running), "done" or "failed".
+    """
+    esc = ae_esc
+    head = f'<span class="ae-card-l">{esc(DS_TITLE)}</span>'
+    if state.get("default"):
+        return ('<div id="ov-defaults" class="ae-card ae-anchor" style="margin:0.5rem 0 0.2rem 0;padding:12px 16px">'
+                f'<div class="ae-row">{ae_pill("This is the default run", "neutral")}'
+                '<span class="ae-small" style="flex:1 1 320px">Every setting is at its default, so this is the run '
+                'that other runs are compared with. Change a setting and run again, and the two appear side by '
+                'side here.</span></div></div>')
+    cmp = state.get("cmp")
+    if not cmp:
+        why = state.get("error") or "The default settings could not be run for this period."
+        return ('<div id="ov-defaults" class="ae-card ae-anchor" style="margin:0.5rem 0 0.2rem 0">'
+                f'{head}<div class="ae-small">No comparison with the default settings for this run. {esc(why)}</div></div>')
+    m_a, m_b = cmp["run"], cmp["base"]
+
+    def num(m, key):
+        v = m.get(key, np.nan)
+        return float(v) if isinstance(v, (int, float, np.floating, np.integer)) else np.nan
+
+    def show(v, kind):
+        if not np.isfinite(v):
+            return "N/A"
+        return ae_neg(f"{v:.2f}") if kind == "ratio" else ae_neg(f"{v:.2%}")
+
+    pair = None
+    if near and np.isfinite(near.get("run", np.nan)) and np.isfinite(near.get("base", np.nan)):
+        pair = (near["run"], near["base"])
+    tone, label, text = ds_verdict(num(m_a, "Sortino Ratio"), num(m_b, "Sortino Ratio"), pair)
+    if cmp.get("identical"):
+        tone, label = "neutral", "Identical"
+        text = ("Every month's return is the same as on the default settings, so the change made no difference "
+                "over this period.")
+    else:
+        d_dd = (round(abs(num(m_b, "Max Drawdown (Daily)")) * 100, 2)
+                - round(abs(num(m_a, "Max Drawdown (Daily)")) * 100, 2))
+        if np.isfinite(d_dd) and abs(d_dd) >= 0.5:
+            text += f" The worst daily drawdown is {abs(d_dd):.1f} points {'shallower' if d_dd > 0 else 'deeper'}."
+        if pair is None and rc == "off":
+            text += (" One run's gap can be the luck of the exact setting. Turn on the Reality Check (sidebar) "
+                     "and this card also compares the two runs' nearby settings.")
+    rows = []
+    for name, key, kind, band, better in DS_ROWS:
+        a, b = num(m_a, key), num(m_b, key)
+        rows.append((name, show(b, kind), show(a, kind), ds_change_pill(a, b, kind, band, better), key in DS_BOLD))
+        if key == "Sortino Ratio" and pair:
+            rows.append(("Sortino, average of nearby settings", _rc_f2(pair[1]), _rc_f2(pair[0]),
+                         ds_change_pill(pair[0], pair[1], "ratio", DS_BAND, True), False))
+    table = ['<div class="ae-tbl" style="margin:0"><table><thead><tr><th>Figure</th>'
+             f'<th>{esc(DS_COLUMN)}</th><th>This run</th><th>Change</th></tr></thead><tbody>']
+    for name, b_txt, a_txt, pill, bold in rows:
+        table.append(('<tr class="ae-bold">' if bold else "<tr>")
+                     + f'<td class="ae-k">{esc(name)}</td><td>{esc(b_txt)}</td>'
+                       f'<td class="ae-strat">{esc(a_txt)}</td><td>{pill}</td></tr>')
+    table.append("</tbody></table></div>")
+    span = f"{cmp['first']:%B %Y} to {cmp['last']:%B %Y}"
+    notes = []
+    if cmp["same"]:
+        notes.append(f"Both runs cover {span} ({cmp['n']} months) on the same prices.")
+    else:
+        notes.append(f"The two runs cover different months, so both columns here are worked out on the "
+                     f"{cmp['n']} months they share, {span}. The figures elsewhere on this page are for this "
+                     f"run's full period.")
+    if cmp["held_n"] and cmp.get("held_same_count") and not cmp.get("identical"):
+        if cmp["held_diff"] == 0:
+            notes.append("They held the same funds in every month.")
+        else:
+            notes.append(f"They held different funds in {cmp['held_diff']} of {cmp['held_n']} months.")
+    notes.append(f"Default settings: {ds_default_line()}.")
+    if pair:
+        notes.append(f"Nearby settings: the main lookback a month either way on each leg, with the month-end "
+                     f"trade on the same day and the days either side ({near['n_run']} backtests for this run, "
+                     f"{near['n_base']} for the default settings), from the Reality Check. A quick read, not "
+                     f"the 90% odds test.")
+    elif rc == "wait" and cmp["same"]:
+        notes.append("The Reality Check is still running. When it finishes, this card adds the two runs' "
+                     "nearby settings.")
+    notes.append("The default run is saved and reused until its prices change.")
+    chips = "".join(ae_tag(c) for c in state.get("changes", []))
+    return ('<div id="ov-defaults" class="ae-card ae-anchor" style="margin:0.5rem 0 0.2rem 0">'
+            f'<div class="ae-row" style="justify-content:space-between">{head}'
+            f'{ae_pill(label, tone, RC_GLYPHS.get(tone))}</div>'
+            f'<div class="ae-row"><span class="ae-small" style="font-weight:600;color:#1C1B19">What changed</span>'
+            f'{chips}</div>'
+            f'<div style="font-size:15px;line-height:1.55;color:#1C1B19">{esc(text)}</div>'
+            + "".join(table)
+            + '<div class="ae-small" style="display:flex;flex-direction:column;gap:3px">'
+            + "".join(f"<div>{esc(n)}</div>" for n in notes) + "</div></div>")
+
+
+# =============================================================================
 # SIDEBAR CONTROLS
 # =============================================================================
 
@@ -5673,6 +6338,21 @@ st.sidebar.title("Backtest Parameters")
 # in view without scrolling. The script still reads every control below on
 # the same run, so the button's place does not change what a run uses.
 run_button = st.sidebar.button("Run Backtest", type="primary", width="stretch")
+# Default settings comparison (added November 20, 2026; see the section above
+# the sidebar). Ticked at startup. Unticked, none of it runs or shows.
+ds_on = st.sidebar.checkbox(
+    "Compare with the default settings",
+    value=True,
+    key="ds_on",
+    help=(
+        "After a run with a changed setting, the same period is also run on "
+        "the default settings, and the Overview tab shows the two side by "
+        "side with the change in each figure. The default run takes a few "
+        "seconds the first time for a period and is saved after that. With "
+        "the Reality Check on, the two runs' nearby settings are compared "
+        "too (about 27 more backtests the first time, saved after that)."
+    ),
+)
 st.sidebar.markdown("---")
 
 # ---- MAIN STRATEGY (second position) ----
@@ -5681,14 +6361,14 @@ st.sidebar.header("Main Strategy")
 main_lookback_label = st.sidebar.selectbox(
     "Main momentum lookback (for final ranking)",
     options=list(MAIN_LOOKBACK_OPTIONS.keys()),
-    index=3,
+    index=list(MAIN_LOOKBACK_OPTIONS.keys()).index(DS_MAIN_LOOKBACK),
 )
 main_lookbacks, main_lookback_weights = MAIN_LOOKBACK_OPTIONS[main_lookback_label]
 
 final_top_n = st.sidebar.radio(
     "How many assets to hold in the final portfolio?",
     options=[2, 3, 4, 5, 6],
-    index=2,
+    index=[2, 3, 4, 5, 6].index(DS_FINAL_TOP_N),
     horizontal=True,
 )
 
@@ -5703,7 +6383,7 @@ EXEC_TIMING_OPTIONS = {rc_exec_label(_k): _k for _k in RC_WIDE_DAYS}
 exec_timing_label = st.sidebar.selectbox(
     "Trade execution timing",
     options=list(EXEC_TIMING_OPTIONS.keys()),
-    index=list(EXEC_TIMING_OPTIONS.values()).index(1),
+    index=list(EXEC_TIMING_OPTIONS.values()).index(DS_EXEC_OFFSET),
     help=(
         "The day the month-end trade is made, at that day's close. The "
         "allocation is computed from the close of the trading day before "
@@ -5745,7 +6425,7 @@ vol_months = st.sidebar.slider(
     "Volatility window (months)",
     min_value=3,
     max_value=24,
-    value=12,
+    value=DS_VOL_MONTHS,
     step=1,
     help=(
         "The months of daily returns, up to the signal date, that the position "
@@ -6145,7 +6825,7 @@ st.sidebar.markdown("---")
 
 # IBIT is pre-selected since November 3, 2026. It joins the basket once it has
 # enough history (JOIN_WHEN_AVAILABLE), so a 1995 start still runs.
-default_fixed = ["TLT", "GLDM", "BIL", "BTAL", "HGER", "IBIT"]
+default_fixed = list(DS_FIXED)
 selected_fixed = []
 with st.sidebar.expander("Fixed Basket Assets", expanded=True):
     st.caption("Toggle built-in assets and/or add custom tickers below.")
@@ -6168,7 +6848,7 @@ with st.sidebar.expander("Fixed Basket Assets", expanded=True):
     selected_fixed.extend(custom_fixed_tickers)
 
 # ---- EQUITY (fifth, open by default since November 13, 2026) ----
-default_equity = ["QQQ", "IWM", "DXJ", "EMXC"]
+default_equity = list(DS_EQUITY)
 selected_equity = []
 with st.sidebar.expander("Equity Sub-Selection", expanded=True):
     st.caption("Choose which equity ETFs are eligible for monthly ranking.")
@@ -6336,7 +7016,7 @@ with st.sidebar.expander("Equity Sub-Selection", expanded=True):
     equity_top_n = st.radio(
         "How many equity ETFs to select each month?",
         options=[0, 1, 2, 3, 4],
-        index=3,
+        index=[0, 1, 2, 3, 4].index(DS_EQUITY_TOP_N),
         horizontal=True,
         help="0 = no equity sub-selection (only fixed assets in basket)"
     )
@@ -6344,7 +7024,7 @@ with st.sidebar.expander("Equity Sub-Selection", expanded=True):
     equity_lookback_label = st.selectbox(
         "Equity momentum lookback",
         options=list(EQUITY_LOOKBACK_OPTIONS.keys()),
-        index=4,
+        index=list(EQUITY_LOOKBACK_OPTIONS.keys()).index(DS_EQUITY_LOOKBACK),
     )
     equity_lookbacks, equity_lookback_weights = EQUITY_LOOKBACK_OPTIONS[equity_lookback_label]
 
@@ -6638,24 +7318,50 @@ if run_button:
         _b_extra = (tuple(sorted(set(rc_basket_b_funds(basket_b)) - set(tickers_tuple)))
                     if basket_b is not None else ())
 
-        download_error = None
-        try:
-            daily_prices = download_data(
-                tuple(sorted(set(tickers_tuple) | set(_b_extra))), download_start, force_refresh=force_refresh)
-        except MissingPriceDataError as exc:
-            daily_prices, download_error = None, str(exc)
-            if _b_extra:
-                try:
-                    daily_prices = download_data(tickers_tuple, download_start, force_refresh=force_refresh)
-                    download_error, basket_b["error"] = None, str(exc)
-                except MissingPriceDataError as exc_a:
-                    daily_prices, download_error = None, str(exc_a)
+        # Default settings comparison (November 20, 2026): a default run's own tickers download with
+        # the run's when the run's basket or Backfill Rules leave some of them out (a run that has
+        # them all downloads what it always did). The download is tried with everything, then without
+        # Basket B's funds, then without the default run's, then with the run's tickers alone, as
+        # before; whichever is left out says so on its card, and the run goes on.
+        _ds_error = None
+        _ds_extra = tuple(sorted(set(ds_default_tickers()) - set(tickers_tuple))) if ds_on else ()
+        _dl_sets = []
+        for _dl_b, _dl_d in ((_b_extra, _ds_extra), ((), _ds_extra), (_b_extra, ()), ((), ())):
+            _dl_set = tuple(sorted(set(tickers_tuple) | set(_dl_b) | set(_dl_d)))
+            if _dl_set not in [_s for _s, _sb, _sd in _dl_sets]:
+                _dl_sets.append((_dl_set, _dl_b, _dl_d))
+        daily_prices, download_error, _dl_first_error = None, None, None
+        for _dl_set, _dl_b, _dl_d in _dl_sets:
+            try:
+                daily_prices = download_data(_dl_set, download_start, force_refresh=force_refresh)
+            except MissingPriceDataError as exc:
+                daily_prices, download_error = None, str(exc)
+                _dl_first_error = _dl_first_error or str(exc)
+                continue
+            download_error = None
+            if _b_extra and not _dl_b:
+                basket_b["error"] = _dl_first_error
+            if _ds_extra and not _dl_d:
+                _ds_error, _ds_extra = f"Its prices could not be loaded. {_dl_first_error}", ()
+            break
 
         if daily_prices is None or daily_prices.empty:
             st.error(download_error or "Failed to download price data. Check your internet connection.")
         else:
             # Make a mutable copy (cached data is read-only)
             daily_prices = daily_prices.copy()
+
+            # Default settings comparison (November 20, 2026): the default run's price table is
+            # planned here, before the run's own Backfill Rules are applied (ds_plan_prices). The
+            # default run's own tickers then leave the table again, so the run reads what it always did.
+            _ds_plan = None
+            if ds_on and _ds_error is None:
+                try:
+                    _ds_plan = ds_plan_prices(daily_prices, backfill_rules, _ds_extra)
+                except Exception as _ds_exc:
+                    _ds_error = f"Its prices could not be prepared ({_ds_exc})."
+            if _ds_extra:
+                daily_prices = daily_prices.drop(columns=[c for c in _ds_extra if c in daily_prices.columns])
 
             # Basket B's own funds must not move the main run's trading calendar (a fund on another
             # country's exchange would add days none of the run's funds traded). If one would, Basket B
@@ -6969,6 +7675,22 @@ if run_button:
                         st.warning(f"Could not write to Excel (file may be open): {e}")
 
                     # =====================================================================
+                    # DEFAULT SETTINGS COMPARISON  (November 20, 2026)
+                    # =====================================================================
+                    # The same period on the default settings, from the saved runs when the prices
+                    # behind them have not changed (ds_prepare). It reads this run's results and
+                    # changes none of them. A failure here leaves a note on the card, nothing more.
+                    ds_state = {"on": False}
+                    if ds_on:
+                        try:
+                            with st.spinner("Comparing with the default settings..."):
+                                ds_state = ds_prepare(params, backfill_rules, _ds_plan, daily_prices, strat_returns,
+                                                      strat_metrics, daily_equity, trade_df, rf_monthly, _ds_error)
+                        except Exception as _ds_exc:
+                            ds_state = {"on": True, "default": False, "cmp": None,
+                                        "error": f"The comparison could not run ({_ds_exc})."}
+
+                    # =====================================================================
                     # RESULTS PAGE  (page facelift, November 17, 2026)
                     # =====================================================================
                     # Six tabs. Everything below only draws what the backtest above produced;
@@ -7136,10 +7858,21 @@ if run_button:
                     # OVERVIEW
                     # =====================================================================
                     with tab_ov:
+                        _ov_links = [("ov-growth", "Growth of $10,000"), ("ov-summary", "Performance Summary"), ("ov-notes", "Run notes")]
+                        if ds_state.get("cmp"):
+                            _ov_links.insert(0, ("ov-defaults", "Against the default settings"))
                         ae_md(ae_head(_eyebrow, f"Sortino {s_sort:.2f} over {_span}, with a worst drop of {abs(s_dd):.1%}", _desc,
-                                      [("ov-growth", "Growth of $10,000"), ("ov-summary", "Performance Summary"), ("ov-notes", "Run notes")]))
+                                      _ov_links))
                         _ov_tiles = st.empty()
                         _ov_tiles.markdown(_ae_tiles_html(None, _rc_wait), unsafe_allow_html=True)
+
+                        # Against the default settings (November 20, 2026). Drawn again with the two
+                        # runs' nearby settings once the Reality Check has finished.
+                        _ov_ds = None
+                        if ds_state.get("on"):
+                            _ov_ds = st.empty()
+                            _ov_ds.markdown(ds_card_html(ds_state, None, "wait" if rc_mode != "off" else "off"),
+                                            unsafe_allow_html=True)
 
                         ae_md(ae_h3(f"Growth of ${INITIAL_CAPITAL:,}",
                                     "Log scale, so equal heights are equal percentage gains. Hover for each month's values; "
@@ -7175,6 +7908,10 @@ if run_button:
                         metric_cols = [("Strategy", strat_metrics, BRAND_PURPLE), (BENCHMARK_TICKER, bench_metrics, BRAND_INDIGO)]
                         for entry in balanced_data:
                             metric_cols.append((entry["label"], entry["metrics"], entry["color"]))
+                        # The default run's column, beside the strategy's, when this run changed a
+                        # setting and the two cover the same months (November 20, 2026).
+                        if ds_state.get("cmp") and ds_state["cmp"]["same"]:
+                            metric_cols.insert(1, (DS_COLUMN, ds_state["cmp"]["base"], BRAND_PURPLE_FADE))
 
                         def _fmt_occurrence(ts, kind):
                             # (inline text, hover text) for the date beneath a value,
@@ -7246,14 +7983,16 @@ if run_button:
                             ("Period", [ae_esc(m.get("Period", "")) for _, m, _c in metric_cols], False),
                         ]
                         header_cells = "".join(
-                            f'<th><span class="ae-sw" style="background:{c}"></span>{ae_esc(label)}{lev_tag if label != "Strategy" else ""}</th>'
+                            f'<th><span class="ae-sw" style="background:{c}"></span>{ae_esc(label)}{lev_tag if label not in ("Strategy", DS_COLUMN) else ""}</th>'
                             for label, _m, c in metric_cols)
                         html_parts = ['<div class="ae-tbl"><table>', f"<thead><tr><th>Metric</th>{header_cells}</tr></thead><tbody>"]
                         for metric, vals, is_bold in metrics_rows:
                             cells = "".join(('<td class="ae-strat">' if i == 0 else "<td>") + v + "</td>" for i, v in enumerate(vals))
                             html_parts.append(('<tr class="ae-bold">' if is_bold else "<tr>") + f'<td class="ae-k">{metric}</td>{cells}</tr>')
                         html_parts.append("</tbody></table></div>")
-                        ae_md(ae_h3("Performance Summary", "Key figures first, in bold. Hover the i beside a ratio for what it measures.",
+                        ae_md(ae_h3("Performance Summary", "Key figures first, in bold. Hover the i beside a ratio for what it measures."
+                                    + (" The Default settings column is the same period on the default settings."
+                                       if any(_lbl == DS_COLUMN for _lbl, _m, _c in metric_cols) else ""),
                                     anchor="ov-summary"))
                         ae_md("".join(html_parts))
 
@@ -7772,14 +8511,34 @@ if run_button:
                     # =====================================================================
                     with tab_rc:
                         if rc_mode != "off":
+                            _rc_A = None
                             try:
                                 _rc_A, _rc_stats = rc_show_panel(daily_prices, monthly_prices, params, results_df,
                                                                  daily_equity, strat_metrics, rc_mode, rc_extras, basket_b)
                                 _ov_tiles.markdown(_ae_tiles_html(_rc_A.get("tiles"), ""), unsafe_allow_html=True)
                             except Exception as _rc_exc:
+                                _rc_A = None
                                 st.warning(f"The Reality Check could not run: {_rc_exc}")
                                 _ov_tiles.markdown(_ae_tiles_html(None, "The Reality Check could not run this time."),
                                                    unsafe_allow_html=True)
+                            # Default settings comparison (November 20, 2026): the same nearby settings
+                            # on the default run, then the Overview's card again with both averages.
+                            if _ov_ds is not None and ds_state.get("cmp"):
+                                _ds_near = None
+                                if _rc_A is not None and ds_state["cmp"]["same"]:
+                                    _ds_bar = st.progress(0.0, text="Default settings: looking for saved nearby runs")
+                                    try:
+                                        _ds_near = ds_nearby(
+                                            ds_state, _rc_A,
+                                            lambda i, n: _ds_bar.progress(
+                                                min(1.0, i / max(n, 1)),
+                                                text=f"Default settings: {i} of {n} nearby backtests done"))
+                                    except Exception:
+                                        _ds_near = None
+                                    finally:
+                                        _ds_bar.empty()
+                                _ov_ds.markdown(ds_card_html(ds_state, _ds_near, "done" if _rc_A is not None else "failed"),
+                                                unsafe_allow_html=True)
                         else:
                             ae_md(ae_head("Reality Check", "Off for this run",
                                           "Turn it on in the sidebar under <b>Reality Check</b> to repeat the backtest on the settings "
