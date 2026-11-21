@@ -3918,14 +3918,86 @@ def ae_buttons(labels, args_list, y=1.02):
     )]
 
 
+# ---- Extra comparison ticker (November 21, 2026) ----
+# One more line beside the benchmarks, typed into the sidebar's "Compare with another ticker" box, which is
+# blank at startup. Blank, nothing here runs and the page is what it was. Filled, the ticker's prices load
+# on their own (cmp_load), outside the backtest's price table, so they cannot touch the run's trading days,
+# signals or results. The ticker then joins balanced_data as one more entry, marked "custom", and so reaches
+# the Growth, Drawdowns and Annual returns charts and the Performance Summary by the path the 60/40 and
+# 80/20 take. Build and checks:
+# C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System\Backtest Engine\Comparison Ticker 2026-11-21\
+# Its color (added later the same day): a preset from CMP_PALETTE, picked in the sidebar, or any hex code
+# typed there, which wins when it is a valid one. Every preset sits apart from the strategy's indigo, the
+# two blues and the S&P 500's gray. The one color is used wherever the ticker is drawn: its lines, bars,
+# legend swatches, the drawdown chart's worst-point dot and label, and its Performance Summary header.
+# The starting color is Charcoal (Tyler, November 21, 2026: a dark gray, not a bright color). It is darker
+# than the S&P 500's gray, and on the drawdown chart it is a solid line where the S&P 500's is dashed.
+CMP_PALETTE = {
+    "Charcoal": "#2B2F36", "Emerald": "#1F9D6B", "Teal": "#0E8C8C", "Olive": "#7A8B2A", "Gold": "#C99A0B",
+    "Burnt orange": "#D9622B", "Crimson": "#C0392B", "Rose": "#E0527A", "Magenta": "#C2278F", "Brown": "#8A5A3B",
+}
+CMP_COLOR = CMP_PALETTE["Charcoal"]   # the starting color: the palette's first
+
+
+def cmp_hex(raw):
+    """A typed hex color code as "#RRGGBB" in upper case, or None when it is not one. Takes "#1f9d6b",
+    "1F9D6B" and the three-digit form "#2a7"."""
+    s = str(raw or "").strip().lstrip("#")
+    if re.fullmatch(r"[0-9A-Fa-f]{3}", s):
+        s = "".join(ch * 2 for ch in s)
+    return "#" + s.upper() if re.fullmatch(r"[0-9A-Fa-f]{6}", s) else None
+
+
+def cmp_clean(raw):
+    """The typed ticker in upper case, less anything a ticker never holds. Blank stays blank."""
+    return re.sub(r"[^A-Za-z0-9.\-^=_]", "", str(raw or "")).upper()
+
+
+def cmp_load(ticker, daily_prices, start_date_str):
+    """(the ticker's closes on the run's trading days, None), or (None, why the ticker was left out).
+
+    A ticker the run already holds (a basket fund, a stand-in) is read from the run's price table, with
+    whatever earlier history the Backfill Rules gave it. Any other is downloaded by download_data, through
+    the price cache, then set on the run's trading days: each day takes the ticker's last close on or before
+    it, between the ticker's first and last close. A forced refresh is never passed on, because a forced
+    download replaces the price cache with what it fetched."""
+    missing = f"no prices were found for {ticker} (check the spelling)"
+    if ticker in daily_prices.columns:
+        s = daily_prices[ticker].dropna()
+    else:
+        try:
+            got = download_data((ticker,), start_date_str)
+        except MissingPriceDataError:
+            return None, missing
+        except Exception as exc:
+            return None, f"{ticker}'s prices could not be loaded ({exc})"
+        if got is None or got.empty or ticker not in got.columns:
+            return None, missing
+        s = got[ticker].dropna()
+    if s.empty:
+        return None, missing
+    cal = market_trading_dates(daily_prices)
+    days = cal[(cal >= s.index[0]) & (cal <= s.index[-1])]
+    s = s.reindex(s.index.union(days)).ffill().reindex(days).dropna()
+    if len(s) < 2:
+        return None, f"{ticker} has no prices on this run's trading days"
+    return s, None
+
+
 def ae_series_set(strat_returns, bench_returns, balanced_data, lev_tag=""):
-    """(name, monthly returns, color, width, dash) for the strategy and its benchmarks, in legend order."""
+    """(name, monthly returns, color, width, dash) for the strategy and its benchmarks, in legend order.
+    The extra comparison ticker, when one was typed, comes last."""
     out = [("Strategy", strat_returns, BRAND_PURPLE, 2.6, None)]
-    for e in sorted(balanced_data, key=lambda e: 0 if e["label"] == "80/20" else 1):
+    for e in sorted((e for e in balanced_data if not e.get("custom")), key=lambda e: 0 if e["label"] == "80/20" else 1):
         r = e["returns"].dropna() if e.get("returns") is not None else None
         if r is not None and len(r):
             out.append((AE_BENCH_NAMES.get(e["ticker"], e["label"]) + lev_tag, r, e["color"], 1.7, None))
     out.append((AE_BENCH_NAMES.get(BENCHMARK_TICKER, BENCHMARK_TICKER) + lev_tag, bench_returns, BRAND_INDIGO, 1.8, None))
+    for e in balanced_data:
+        if e.get("custom"):
+            r = e["returns"].dropna() if e.get("returns") is not None else None
+            if r is not None and len(r):
+                out.append((AE_BENCH_NAMES.get(e["ticker"], e["label"]) + lev_tag, r, e["color"], 1.9, None))
     return out
 
 
@@ -3950,7 +4022,12 @@ def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
             else:
                 cut = idx[-(yrs * 12) - 1]
                 rr = r[r.index > cut]
-                w = pd.concat([pd.Series([1.0], index=[cut]), (1 + rr).cumprod()])
+                # A line that begins inside the period (an extra comparison ticker with a short
+                # history) starts at its own first month, not at the period's first day.
+                start = cut
+                if len(rr) and rr.index[0] - pd.offsets.MonthEnd(1) > cut:
+                    start = rr.index[0] - pd.offsets.MonthEnd(1)
+                w = pd.concat([pd.Series([1.0], index=[start]), (1 + rr).cumprod()])
             v = INITIAL_CAPITAL * w
             n_years = max((len(w) - 1) / 12.0, 1e-9)
             cagr = (v.iloc[-1] / INITIAL_CAPITAL) ** (1 / n_years) - 1
@@ -6369,6 +6446,56 @@ ds_on = st.sidebar.checkbox(
         "too (about 27 more backtests the first time, saved after that)."
     ),
 )
+# Extra comparison ticker (added November 21, 2026). Blank at startup: nothing
+# is downloaded or drawn for it. See "Extra comparison ticker" above
+# ae_series_set.
+cmp_ticker = cmp_clean(st.sidebar.text_input(
+    "Compare with another ticker (optional)",
+    value="",
+    key="cmp_ticker",
+    max_chars=20,
+    placeholder="Blank for none; for example QQQ",
+    help=(
+        "Type any ticker Yahoo Finance carries (QQQ, VTI, BRK-B, BTC-USD), "
+        "then press Run Backtest. It is added as one more line on the Growth, "
+        "Drawdowns and Annual returns charts and one more column in the "
+        "Performance Summary, beside the S&P 500, 60/40 and 80/20. It is never "
+        "part of the backtest: the strategy's results are the same with or "
+        "without it. A ticker with a shorter history than the backtest starts "
+        "where its prices begin, and with leverage on it carries the "
+        "benchmarks' leverage. Leave the box blank for none."
+    ),
+))
+# Its color: a preset or a typed hex code. Drawn only while the box holds a ticker, so the
+# sidebar at startup is the one box. A valid hex code wins over the preset.
+cmp_color = CMP_COLOR
+if cmp_ticker:
+    _cmp_c1, _cmp_c2 = st.sidebar.columns([1.2, 1])
+    _cmp_pick = _cmp_c1.selectbox(
+        "Its color", list(CMP_PALETTE), index=0, key="cmp_color_pick",
+        help="The color of the added ticker wherever it is drawn. Pick a preset here, or type a hex "
+             "code in the box beside it.",
+    )
+    _cmp_typed = _cmp_c2.text_input(
+        "Or a hex code", value="", key="cmp_color_hex", max_chars=7, placeholder="#2B2F36",
+        help="Any hex color code, such as #1F9D6B or #2a7. When it is filled in it is used in place "
+             "of the preset. Leave it blank to use the preset.",
+    )
+    cmp_color = CMP_PALETTE.get(_cmp_pick, CMP_COLOR)
+    _cmp_says = f"{_cmp_pick} ({cmp_color})"
+    if _cmp_typed.strip():
+        if cmp_hex(_cmp_typed):
+            cmp_color = cmp_hex(_cmp_typed)
+            _cmp_says = f"Hex code {cmp_color}"
+        else:
+            _cmp_says = f"Not a hex color code, so {_cmp_pick} ({cmp_color}) is used"
+    st.sidebar.markdown(
+        '<div class="ae-cmp-swatch" style="display:flex;align-items:center;gap:8px;font-size:12.5px;'
+        'color:#6B6862;margin:-4px 0 6px 0;">'
+        f'<span style="flex:0 0 28px;height:11px;border-radius:3px;background:{cmp_color};"></span>'
+        f"<span>{ae_esc(_cmp_says)}</span></div>",
+        unsafe_allow_html=True,
+    )
 st.sidebar.markdown("---")
 
 # ---- MAIN STRATEGY (second position) ----
@@ -7602,6 +7729,49 @@ if run_button:
                             "metrics": {},
                         })
 
+                    # Extra comparison ticker (November 21, 2026): one more entry, marked
+                    # "custom", when the sidebar's box holds a ticker. Its prices load apart
+                    # from the run's price table (cmp_load), and it gets the benchmarks'
+                    # leverage treatment. Left out, with a warning, when it has no prices.
+                    cmp_note, cmp_error = "", ""
+                    if cmp_ticker:
+                        if cmp_ticker == BENCHMARK_TICKER or cmp_ticker in [c["ticker"] for c in BAL_BENCHMARKS]:
+                            cmp_error = f"{cmp_ticker} is already one of the benchmarks on every chart"
+                        else:
+                            _cx_px, _cx_why = cmp_load(cmp_ticker, daily_prices, download_start)
+                            if _cx_px is None:
+                                cmp_error = _cx_why
+                            else:
+                                _cx_r = (get_month_end_prices(_cx_px.to_frame(cmp_ticker))[cmp_ticker]
+                                         .pct_change().reindex(common_dates))
+                                if _cx_r.notna().sum() < 2:
+                                    cmp_error = f"{cmp_ticker} has no prices in the months of this backtest"
+                                else:
+                                    _cx_first, _cx_last = _cx_r.first_valid_index(), _cx_r.last_valid_index()
+                                    _cx_late, _cx_early = _cx_first > common_dates[0], _cx_last < common_dates[-1]
+                                    _cx_label = cmp_ticker
+                                    if _cx_late and _cx_early:
+                                        _cx_label += f" ({_cx_first:%b %Y} to {_cx_last:%b %Y})"
+                                        cmp_note = (f"{cmp_ticker}'s prices cover {_cx_first:%B %Y} to {_cx_last:%B %Y} only, "
+                                                    "so its lines and figures cover a shorter period than the others.")
+                                    elif _cx_late:
+                                        _cx_label += f" (from {_cx_first:%b %Y})"
+                                        cmp_note = (f"{cmp_ticker} joins in {_cx_first:%B %Y}, the first full month it has prices, "
+                                                    "so its lines and figures cover a shorter period than the others.")
+                                    elif _cx_early:
+                                        _cx_label += f" (to {_cx_last:%b %Y})"
+                                        cmp_note = (f"{cmp_ticker}'s prices end in {_cx_last:%B %Y}, so its lines and figures "
+                                                    "stop there.")
+                                    if leverage_enabled:
+                                        _cx_r = _cx_r * leverage_mults - borrow_costs
+                                    balanced_data.append({
+                                        "label": _cx_label, "ticker": cmp_ticker, "color": cmp_color, "linestyle": ":",
+                                        "custom": True, "daily_px": _cx_px,
+                                        "returns": _cx_r,
+                                        "daily_equity": pd.Series(dtype=float),
+                                        "metrics": {},
+                                    })
+
                     # Risk-free rate from BIL for Sharpe/Sortino calculation
                     rf_monthly = None
                     if "BIL" in monthly_prices.columns:
@@ -7655,9 +7825,13 @@ if run_button:
 
                         for entry in balanced_data:
                             t = entry["ticker"]
-                            if t not in daily_prices.columns:
-                                continue
-                            bal_daily = daily_prices[t].loc[de_start:de_end].dropna()
+                            # The extra comparison ticker carries its own prices (cmp_load).
+                            _bal_px = entry.get("daily_px")
+                            if _bal_px is None:
+                                if t not in daily_prices.columns:
+                                    continue
+                                _bal_px = daily_prices[t]
+                            bal_daily = _bal_px.loc[de_start:de_end].dropna()
                             if len(bal_daily) == 0:
                                 continue
                             if daily_lev_map is not None:
@@ -7723,6 +7897,12 @@ if run_button:
                           f"<span>Prices through the {_last_px:%b} {_last_px.day}, {_last_px:%Y} close</span>"
                           + (f"<span>Results logged to {ae_esc(os.path.basename(RESULTS_FILE))}</span>" if _ae_logged else "")
                           + "</div>")
+
+                    # Extra comparison ticker (November 21, 2026): say so when it was left out, and
+                    # keep its short-history note for the headings of the places it appears.
+                    if cmp_error:
+                        st.warning(f"The comparison ticker was left out: {cmp_error}. The backtest itself is not affected.")
+                    _cmp_sub = (" " + ae_esc(cmp_note)) if cmp_note else ""
 
                     tab_ov, tab_rc, tab_sig, tab_rd, tab_hl, tab_td = st.tabs(
                         ["Overview", "Reality Check", "Signals", "Returns and Drawdowns", "Strategy Health", "Trades and Data"])
@@ -7892,7 +8072,8 @@ if run_button:
 
                         ae_md(ae_h3(f"Growth of ${INITIAL_CAPITAL:,}",
                                     "Log scale, so equal heights are equal percentage gains. Hover for each month's values; "
-                                    "the buttons change the period and a legend click hides a line.", anchor="ov-growth"))
+                                    "the buttons change the period and a legend click hides a line." + _cmp_sub,
+                                    anchor="ov-growth"))
                         ae_plot(ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag), f"Growth of ${INITIAL_CAPITAL:,}",
                                 "ae_growth")
                         ae_md('<p style="text-align:center;font-size:12px;color:#8A8680;margin:-0.75rem 0 1rem;">'
@@ -8008,7 +8189,7 @@ if run_button:
                         html_parts.append("</tbody></table></div>")
                         ae_md(ae_h3("Performance Summary", "Key figures first, in bold. Hover the i beside a ratio for what it measures."
                                     + (" The Default settings column is the same period on the default settings."
-                                       if any(_lbl == DS_COLUMN for _lbl, _m, _c in metric_cols) else ""),
+                                       if any(_lbl == DS_COLUMN for _lbl, _m, _c in metric_cols) else "") + _cmp_sub,
                                     anchor="ov-summary"))
                         ae_md("".join(html_parts))
 
@@ -8232,8 +8413,8 @@ if run_button:
                         ae_md(ae_head("Returns and drawdowns", "How deep the losses went, year by year",
                                       "Hover for values. The buttons switch the view, and a legend click hides or shows a line.",
                                       [("rd-dd", "Drawdowns"), ("rd-annual", "Annual returns")]))
-                        ae_md(ae_h3("Drawdowns", "How far each portfolio sat below its last high, from daily closes or month-end values.",
-                                    anchor="rd-dd"))
+                        ae_md(ae_h3("Drawdowns", "How far each portfolio sat below its last high, from daily closes or month-end values."
+                                    + _cmp_sub, anchor="rd-dd"))
                         ae_plot(ae_fig_drawdowns(strat_returns, bench_returns, balanced_data, daily_equity, spy_daily_equity, lev_tag),
                                 "Drawdowns", "ae_drawdowns")
                         _ys, _yb = ae_yearly(strat_returns), ae_yearly(bench_returns).reindex(ae_yearly(strat_returns).index)
