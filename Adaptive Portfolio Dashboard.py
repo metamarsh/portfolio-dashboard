@@ -4192,6 +4192,262 @@ def ae_fig_drawdowns(strat_returns, bench_returns, balanced_data, daily_equity, 
     return fig
 
 
+# ---- Drawdowns in context (moved here from the Chart Dashboard, November 21, 2026) ----
+# Every drawdown of 10% or more in the backtest just run, as a ladder of bars, with each portfolio's worst drawdown
+# on the same scale beneath (the strategy, the 80/20 and the S&P 500 over the run's period). Tyler, November 21,
+# 2026: it belongs here, built from the run; it left the public Chart Dashboard the same day.
+# The shaded zone is a fixed study, not this run: the worst daily drawdowns of the standing settings (2/8 main
+# lookback, top 4, 3 of 4 equities on 1/3, 12-month window, with IBIT, net of 0.05% a side) and their eight nearby
+# settings (short leg 1 to 3, long leg 7 to 9) since January 1981, under the run's position sizing, shaded to at
+# least 20%. It comes from drawdown_context.json beside this file (built by Basket Research\ETF Scouting\Drawdown
+# Context 1981 2026-11-21\Build Drawdown Context.py) and is left off with leverage on, since the study is unlevered.
+# When the Chart Dashboard's published series sits beside this folder (..\Portfolio Hist Val Reconstruction\
+# asymmetric_edge_series.csv, on Tyler's PC), a "Live account now" bar adds the live account's decline from its
+# high; the deployed copy has no such file and draws without it. Drawdowns are measured on exchange days only: the
+# daily curve also carries the price table's weekend and holiday rows, which would put a peak on a Sunday.
+DDC_FILE = os.path.join(_base_dir, "drawdown_context.json")
+DDC_LIVE_FILE = os.path.join(os.path.dirname(_base_dir), "Portfolio Hist Val Reconstruction", "asymmetric_edge_series.csv")
+DDC_MIN = 0.10            # drawdowns this deep or deeper get a bar
+DDC_MAX_ROWS = 16         # at most this many bars, the deepest
+DDC_BAND_TO = 20.0        # the shading is drawn to at least this depth, in percent (Tyler, November 21, 2026)
+DDC_ROW = 44              # px per bar row
+DDC_LEFT = 232            # px for the row labels
+DDC_BACKTEST = "#B3ACD8"  # this backtest's drawdowns: a light tint of the strategy's indigo
+DDC_BAND = "#F1EFF8"
+DDC_BAND_EDGE = "#C9C3E3"
+DDC_BENCH = [("80/20", "AOA"), ("S&P 500", "SPY")]
+DDC_SIZING_WORDS = {"erc": "equal risk contribution", "inverse_vol": "inverse volatility"}
+
+
+def ddc_episodes(e):
+    """A value series' drawdowns as (peak, trough, recovered or None, depth), as the drawdown studies count them:
+    a drawdown opens on the first close below the running high, its peak is the close before, and it ends on the
+    first close back at or above that high."""
+    dd = e / e.cummax() - 1
+    out, inep, prev = [], False, None
+    peak = trough = None
+    depth = 0.0
+    for t, v in dd.items():
+        if v < 0 and not inep:
+            inep, peak, trough, depth = True, (prev if prev is not None else t), t, v
+        elif inep:
+            if v < depth:
+                trough, depth = t, v
+            if v >= 0:
+                out.append((peak, trough, t, float(depth)))
+                inep = False
+        prev = t
+    if inep:
+        out.append((peak, trough, None, float(depth)))
+    return out
+
+
+def ddc_day(d):
+    d = pd.Timestamp(d)
+    return f"{d:%b} {d.day}, {d.year}"
+
+
+def ddc_months(a, b):
+    """Months from a to b, half up."""
+    return int(np.floor((pd.Timestamp(b) - pd.Timestamp(a)).days / 30.4375 + 0.5))
+
+
+def ddc_years(p, t):
+    p, t = pd.Timestamp(p).year, pd.Timestamp(t).year
+    return str(p) if p == t else f"{p}–{str(t)[-2:]}"
+
+
+def ddc_row_label(primary, secondary, live=False):
+    color = BRAND_PURPLE if live else AE_INK
+    p = f"<b>{ae_esc(primary)}</b>" if live else ae_esc(primary)
+    return (f"<span style='color:{color}'>{p}</span><br>"
+            f"<span style='font-size:12px;color:{AE_AXIS}'>{ae_esc(secondary)}</span>")
+
+
+def ddc_band(sizing, leverage_on):
+    """The fixed study's shaded range for this position sizing: (dict(lo, hi, text), note), or (None, note)."""
+    if leverage_on:
+        return None, "The shaded zone is left off with leverage on: the study behind it is unlevered."
+    try:
+        with open(DDC_FILE, encoding="utf-8-sig") as fh:
+            data = json.load(fh)
+        win = data["methods"][sizing]["windows"][data.get("band_window", "1981-01")]
+        vals = [float(v) * 100.0 for v in win["band"]]
+        start = pd.Timestamp(win["start"])
+    except Exception:
+        return None, ""
+    lo, hi = -max(vals), -min(vals)
+    lo_t, hi_t, to_t = ae_neg(f"-{lo:.1f}%"), ae_neg(f"-{hi:.1f}%"), ae_neg(f"-{DDC_BAND_TO:.0f}%")
+    text = (f"<b>Shaded:</b> standing settings and<br>8 nearby, since {start:%b %Y},<br>{lo_t} to {hi_t}"
+            + (f", shown to {to_t}" if hi < DDC_BAND_TO else ""))
+    note = (f"Shaded: the worst daily drawdowns of the standing settings (2/8) and their eight nearby settings since "
+            f"{start:%B %Y}, with Bitcoin, under {DDC_SIZING_WORDS.get(sizing, sizing)}, {lo_t} to {hi_t}"
+            + (f", shaded to {to_t}" if hi < DDC_BAND_TO else "")
+            + ". A fixed study, not this run; before 1995 it rests on stand-in histories.")
+    return dict(lo=lo, hi=max(hi, DDC_BAND_TO), text=text), note
+
+
+def ddc_live():
+    """The live account's decline from its high, from the Chart Dashboard's published series when it sits beside
+    this folder: (depth in %, peak date, last date), or None (as on the deployed copy)."""
+    try:
+        s = pd.read_csv(DDC_LIVE_FILE, index_col=0, parse_dates=True)["value"].dropna()
+    except Exception:
+        return None
+    if len(s) < 2:
+        return None
+    top = s.cummax().iloc[-1]
+    return float((s.iloc[-1] / top - 1.0) * 100.0), s[s >= top].index[-1], s.index[-1]
+
+
+def ae_fig_drawdown_context(daily_equity, balanced_data, spy_daily_equity, cal, period_start, lev_tag="",
+                            band=None, band_note="", live=None):
+    """Drawdowns in context for the run just made: every drawdown of 10% or more (the DDC_MAX_ROWS deepest) with
+    the live account's decline when known, over each portfolio's worst on one scale, and the fixed study's band.
+    Returns (figure, the heading's sub-line as HTML)."""
+    from plotly.subplots import make_subplots
+
+    def on_cal(s):
+        s = s.dropna()
+        s = s[s.index >= period_start]
+        return s[s.index.isin(cal)] if cal is not None and len(cal) else s
+
+    e = on_cal(daily_equity)
+    start, end = e.index[0], e.index[-1]
+    eps = ddc_episodes(e)
+    big = sorted([x for x in eps if x[3] <= -DDC_MIN], key=lambda x: x[3])
+
+    def rec_text(p, r):
+        return f"back to peak in {ddc_months(p, r)} months" if r is not None else f"not back to peak by {ddc_day(end)}"
+
+    def hover(name, p, t, r, d, what):
+        back = (f"Back to peak {ddc_day(r)}, {ddc_months(p, r)} months" if r is not None
+                else f"Not back to peak by {ddc_day(end)}")
+        return (f"<b>{ae_esc(name)}</b> ({what})<br>Peak {ddc_day(p)}, low {ddc_day(t)}<br>{back}<br>"
+                f"Depth {ae_neg(f'{d:.2%}')}")
+
+    top = [dict(mag=-d * 100.0, color=DDC_BACKTEST, text=ae_neg(f"{d:.1%}"),
+                label=ddc_row_label(ddc_years(p, t), rec_text(p, r)), hover=hover(ddc_years(p, t), p, t, r, d, "backtest"))
+           for p, t, r, d in big[:DDC_MAX_ROWS]]
+    if live is not None:
+        depth, peak, last = live
+        mag = max(0.0, -depth)
+        top.append(dict(mag=mag, color=BRAND_PURPLE, now=True, text=f"<b>{ae_neg(f'-{mag:.1f}%')}</b>",
+                        label=ddc_row_label("Live account now", "at a new high" if mag < 0.005
+                                            else f"from the {ddc_day(peak)} high", live=True),
+                        hover=(f"<b>Live account now</b> (Fidelity reconstruction)<br>High {ddc_day(peak)}<br>"
+                               f"Close {ddc_day(last)}<br>Depth {ae_neg(f'-{mag:.2f}%')}")))
+    if not top:
+        top.append(dict(mag=0.0, color=DDC_BACKTEST, text="", label=ddc_row_label("None", "no drawdown of 10% or more"),
+                        hover="No drawdown of 10% or more"))
+    top.sort(key=lambda r: r["mag"])
+
+    bottom = []
+    if eps:
+        p, t, r, d = min(eps, key=lambda x: x[3])
+        nm = "Asymmetric Edge (backtest)" + lev_tag
+        bottom.append(dict(mag=-d * 100.0, color=DDC_BACKTEST, text=ae_neg(f"{d:.1%}"),
+                           label=ddc_row_label(nm, f"{ddc_years(p, t)}, {rec_text(p, r)}"), hover=hover(nm, p, t, r, d, "backtest")))
+    for key, ticker in DDC_BENCH:
+        series = spy_daily_equity if ticker == "SPY" else next(
+            (b.get("daily_equity") for b in balanced_data if b.get("ticker") == ticker), None)
+        if series is None or not len(series):
+            continue
+        s = on_cal(series)
+        s = s[s.index <= end]
+        b_eps = ddc_episodes(s) if len(s) > 1 else []
+        if not b_eps:
+            continue
+        p, t, r, d = min(b_eps, key=lambda x: x[3])
+        nm = AE_BENCH_NAMES.get(ticker, ticker) + lev_tag
+        bottom.append(dict(mag=-d * 100.0, color=AE_DD_LOOK[key][0], text=ae_neg(f"{d:.1%}"),
+                           label=ddc_row_label(nm, f"{ddc_years(p, t)}, {rec_text(p, r)}"),
+                           hover=hover(nm, p, t, r, d, "total return")))
+
+    n1, n2 = len(top), max(len(bottom), 1)
+    M_T, GAP, M_B, M_R = 58, 76, 96, 28
+    plot_h = (n1 + n2) * DDC_ROW + GAP
+    height = M_T + plot_h + M_B
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[n1, n2], vertical_spacing=GAP / plot_h)
+    for row, rows in ((1, top), (2, bottom)):
+        ys = [f"r{row}_{i}" for i in range(len(rows))]
+        fig.add_trace(go.Bar(
+            x=[r["mag"] for r in rows], y=ys, orientation="h", width=0.58,
+            marker=dict(color=[r["color"] for r in rows], cornerradius=6),
+            text=[r["text"] for r in rows], textposition="outside", cliponaxis=False,
+            textfont=dict(size=14, color=[BRAND_PURPLE if r.get("now") else AE_INK for r in rows]),
+            hovertext=[r["hover"] for r in rows], hovertemplate="%{hovertext}<extra></extra>", showlegend=False,
+        ), row=row, col=1)
+        fig.update_yaxes(tickmode="array", tickvals=ys, ticktext=[r["label"] for r in rows], autorange="reversed",
+                         showgrid=False, ticks="", ticklabelstandoff=12, tickfont=dict(size=15, color=AE_INK),
+                         fixedrange=True, row=row, col=1)
+
+    deepest = max([r["mag"] for r in top + bottom] + ([band["hi"]] if band else []))
+    step = 10 if deepest > 25 else 5
+    xmax = int(np.ceil((deepest + 2.0) / step)) * step
+    if band:
+        # Leave room right of the band for its label.
+        xmax = max(xmax, int(np.ceil(band["hi"] / 0.54 / step)) * step)
+    ticks = list(range(0, xmax + 1, step))
+    for row in (1, 2):
+        fig.update_xaxes(range=[0, xmax], tickvals=ticks, showgrid=True, gridcolor=AE_PLOT_GRID, zeroline=True,
+                         zerolinecolor=AE_CONTROL, zerolinewidth=1.5, fixedrange=True, row=row, col=1)
+    fig.update_xaxes(ticktext=[ae_neg(f"-{t}%") if t else "0%" for t in ticks], tickfont=dict(size=13, color=AE_AXIS),
+                     title=dict(text="Decline from peak", font=dict(size=13, color=AE_BODY), standoff=8), row=2, col=1)
+    if band:
+        lo, hi = band["lo"], band["hi"]
+        fig.add_shape(type="rect", xref="x", yref="y domain", x0=lo, x1=hi, y0=0, y1=1,
+                      fillcolor=DDC_BAND, line=dict(width=0), layer="below")
+        for xv in (lo, hi):
+            fig.add_shape(type="line", xref="x", yref="y domain", x0=xv, x1=xv, y0=0, y1=1,
+                          line=dict(color=DDC_BAND_EDGE, width=1, dash="3px,3px"), layer="below")
+        fig.add_annotation(x=hi, y="r1_0", xref="x", yref="y", xanchor="left", xshift=10, yanchor="middle",
+                           align="left", showarrow=False, text=band["text"],
+                           font=dict(size=12, color=AE_BODY, family=AE_SANS))
+
+    title_top = (f"Every drawdown of 10% or more, {start:%b %Y} to {end:%b %Y}"
+                 + (", and the live account now" if live is not None else ""))
+    title_bottom = "Worst drawdown over the same period: the strategy and the market"
+    for y, text in ((fig.layout.yaxis.domain[1], title_top), (fig.layout.yaxis2.domain[1], title_bottom)):
+        fig.add_annotation(x=0, y=y, xref="paper", yref="paper", xanchor="left", yanchor="bottom", xshift=-(DDC_LEFT - 4),
+                           yshift=14, showarrow=False, text=f"<b>{ae_esc(text)}</b>",
+                           font=dict(size=15, color=AE_INK, family=AE_SANS))
+    keys = [("This backtest", DDC_BACKTEST)] + ([("Live account", BRAND_PURPLE)] if live is not None else [])
+    for name, color in keys:
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name=name + " ",
+                                 marker=dict(symbol="square", size=14, color=color, line=dict(color=color, width=1)),
+                                 hoverinfo="skip"), row=1, col=1)
+    fig.update_layout(
+        height=height, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
+        font=dict(family=AE_SANS, size=13, color=AE_AXIS),
+        margin=dict(t=M_T, b=M_B, l=DDC_LEFT, r=M_R), hovermode="closest",
+        legend=dict(orientation="h", xref="container", yref="container", x=0.5, xanchor="center",
+                    y=14 / height, yanchor="bottom", font=dict(size=13, color=AE_BODY),
+                    itemsizing="constant", itemclick=False, itemdoubleclick=False),
+        hoverlabel=dict(bgcolor="#ffffff", bordercolor=AE_CARD, font=dict(family=AE_SANS, size=13, color=AE_INK)),
+    )
+
+    parts = []
+    if big:
+        p, t, r, d = big[0]
+        n = len(big)
+        parts.append(f"{n} drawdown{'s' if n != 1 else ''} of 10% or more from {start:%B %Y} to {end:%B %Y}"
+                     + (f" (the {DDC_MAX_ROWS} deepest shown)" if n > DDC_MAX_ROWS else "")
+                     + f". The deepest, {ae_neg(f'{d:.1%}')} in {ddc_years(p, t)}, "
+                     + (f"took {ddc_months(p, r)} months to get back to its peak." if r is not None
+                        else "had not recovered by the end of the backtest."))
+    else:
+        parts.append(f"No drawdown of 10% or more from {start:%B %Y} to {end:%B %Y}.")
+    if live is not None and big:
+        mag = max(0.0, -live[0])
+        deeper = sum(1 for x in big if -x[3] * 100.0 > mag)
+        parts.append(f"The live account is {mag:.1f}% below its {ddc_day(live[1])} high (Fidelity reconstruction, "
+                     f"through {ddc_day(live[2])}); {deeper} of this backtest's {len(big)} went deeper.")
+    if band_note:
+        parts.append(band_note)
+    return fig, ae_esc(" ".join(parts))
+
+
 def ae_yearly(r):
     r = r.dropna()
     return (1 + r).groupby(r.index.year).prod() - 1
@@ -8412,11 +8668,27 @@ if run_button:
                     with tab_rd:
                         ae_md(ae_head("Returns and drawdowns", "How deep the losses went, year by year",
                                       "Hover for values. The buttons switch the view, and a legend click hides or shows a line.",
-                                      [("rd-dd", "Drawdowns"), ("rd-annual", "Annual returns")]))
+                                      [("rd-dd", "Drawdowns"), ("rd-context", "Drawdowns in context"),
+                                       ("rd-annual", "Annual returns")]))
                         ae_md(ae_h3("Drawdowns", "How far each portfolio sat below its last high, from daily closes or month-end values."
                                     + _cmp_sub, anchor="rd-dd"))
                         ae_plot(ae_fig_drawdowns(strat_returns, bench_returns, balanced_data, daily_equity, spy_daily_equity, lev_tag),
                                 "Drawdowns", "ae_drawdowns")
+                        # Drawdowns in context (moved here from the Chart Dashboard, November 21, 2026): this run's
+                        # drawdowns of 10% or more, with the fixed study's shaded range beside them.
+                        try:
+                            if daily_equity is None or not len(daily_equity):
+                                raise ValueError("this run has no daily equity curve")
+                            _ddc_b, _ddc_note = ddc_band(params.get("sizing", SIZING_IF_UNSET), leverage_enabled)
+                            _ddc_cal = market_trading_dates(daily_prices)
+                            _ddc_fig, _ddc_sub = ae_fig_drawdown_context(
+                                daily_equity, balanced_data, spy_daily_equity, _ddc_cal,
+                                pd.Timestamp(_p0.year, _p0.month, 1), lev_tag, _ddc_b, _ddc_note, ddc_live())
+                            ae_md(ae_h3("Drawdowns in context", _ddc_sub, anchor="rd-context"))
+                            ae_plot(_ddc_fig, "Drawdowns in Context", "ae_drawdown_context")
+                        except Exception as _ddc_exc:  # noqa: BLE001 - the section must never take the tab down
+                            ae_md(ae_h3("Drawdowns in context", ae_esc(f"Not drawn for this run ({type(_ddc_exc).__name__}: "
+                                                                       f"{_ddc_exc})."), anchor="rd-context"))
                         _ys, _yb = ae_yearly(strat_returns), ae_yearly(bench_returns).reindex(ae_yearly(strat_returns).index)
                         _partial = []
                         if _p0.month != 1:

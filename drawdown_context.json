@@ -1,0 +1,951 @@
+{
+ "note": "Static backtest figures behind the Risk page's Drawdowns in Context section, rebuilt November 21, 2026 from the Backtest Engine (its history reaches January 1981) under both position-sizing methods, equal risk contribution and inverse volatility: per method and window, the strategy's drawdowns of 10% or more, the worst drawdowns with slightly different settings (band, sorted), and the benchmarks' worst drawdowns. The band on every period is the January 1981 window's. 'windows' repeats the default method's windows for older readers. Refresh at the quarterly review.",
+ "version": 2,
+ "backtest_end": "2026-10-30",
+ "band_window": "1981-01",
+ "default_method": "erc",
+ "methods": {
+  "erc": {
+   "aug_2024": -0.108095,
+   "windows": {
+    "1981-01": {
+     "start": "1981-01-01",
+     "episodes": [
+      {
+       "peak": "1987-10-05",
+       "trough": "1987-10-26",
+       "recovered": "1990-11-13",
+       "depth": -0.169757,
+       "months_underwater": 37.3
+      },
+      {
+       "peak": "2000-03-09",
+       "trough": "2000-07-28",
+       "recovered": "2002-04-02",
+       "depth": -0.13625,
+       "months_underwater": 24.8
+      },
+      {
+       "peak": "2006-05-10",
+       "trough": "2006-07-21",
+       "recovered": "2007-07-13",
+       "depth": -0.108222,
+       "months_underwater": 14.1
+      },
+      {
+       "peak": "2007-07-19",
+       "trough": "2007-08-16",
+       "recovered": "2007-10-12",
+       "depth": -0.110084,
+       "months_underwater": 2.8
+      },
+      {
+       "peak": "2015-03-24",
+       "trough": "2016-05-24",
+       "recovered": "2016-12-20",
+       "depth": -0.113845,
+       "months_underwater": 20.9
+      },
+      {
+       "peak": "2020-02-19",
+       "trough": "2020-03-19",
+       "recovered": "2020-07-09",
+       "depth": -0.121011,
+       "months_underwater": 4.6
+      },
+      {
+       "peak": "2021-03-11",
+       "trough": "2021-07-19",
+       "recovered": "2021-10-15",
+       "depth": -0.117417,
+       "months_underwater": 7.2
+      },
+      {
+       "peak": "2024-07-16",
+       "trough": "2024-08-07",
+       "recovered": "2024-11-20",
+       "depth": -0.108095,
+       "months_underwater": 4.2
+      }
+     ],
+     "band": [
+      -0.190799,
+      -0.186328,
+      -0.183975,
+      -0.171384,
+      -0.171384,
+      -0.169757,
+      -0.169757,
+      -0.169757,
+      -0.164222
+     ],
+     "bench": {
+      "S&P 500": {
+       "peak": "2007-10-09",
+       "trough": "2009-03-09",
+       "recovered": "2012-08-16",
+       "depth": -0.551894,
+       "months_underwater": 58.3
+      },
+      "80/20": {
+       "peak": "2007-10-31",
+       "trough": "2009-03-09",
+       "recovered": "2012-03-19",
+       "depth": -0.511635,
+       "months_underwater": 52.6
+      }
+     }
+    },
+    "1995-06": {
+     "start": "1995-06-01",
+     "episodes": [
+      {
+       "peak": "2000-03-09",
+       "trough": "2000-07-28",
+       "recovered": "2002-04-02",
+       "depth": -0.13625,
+       "months_underwater": 24.8
+      },
+      {
+       "peak": "2006-05-10",
+       "trough": "2006-07-21",
+       "recovered": "2007-07-13",
+       "depth": -0.108222,
+       "months_underwater": 14.1
+      },
+      {
+       "peak": "2007-07-19",
+       "trough": "2007-08-16",
+       "recovered": "2007-10-12",
+       "depth": -0.110084,
+       "months_underwater": 2.8
+      },
+      {
+       "peak": "2015-03-24",
+       "trough": "2016-05-24",
+       "recovered": "2016-12-20",
+       "depth": -0.113845,
+       "months_underwater": 20.9
+      },
+      {
+       "peak": "2020-02-19",
+       "trough": "2020-03-19",
+       "recovered": "2020-07-09",
+       "depth": -0.121011,
+       "months_underwater": 4.6
+      },
+      {
+       "peak": "2021-03-11",
+       "trough": "2021-07-19",
+       "recovered": "2021-10-15",
+       "depth": -0.117417,
+       "months_underwater": 7.2
+      },
+      {
+       "peak": "2024-07-16",
+       "trough": "2024-08-07",
+       "recovered": "2024-11-20",
+       "depth": -0.108095,
+       "months_underwater": 4.2
+      }
+     ],
+     "band": [
+      -0.190799,
+      -0.186328,
+      -0.183975,
+      -0.171384,
+      -0.171384,
+      -0.164222,
+      -0.163469,
+      -0.13625,
+      -0.134446
+     ],
+     "bench": {
+      "S&P 500": {
+       "peak": "2007-10-09",
+       "trough": "2009-03-09",
+       "recovered": "2012-08-16",
+       "depth": -0.551894,
+       "months_underwater": 58.3
+      },
+      "80/20": {
+       "peak": "2007-10-31",
+       "trough": "2009-03-09",
+       "recovered": "2012-03-19",
+       "depth": -0.511635,
+       "months_underwater": 52.6
+      }
+     }
+    },
+    "2006-01": {
+     "start": "2006-01-01",
+     "episodes": [
+      {
+       "peak": "2006-05-10",
+       "trough": "2006-07-21",
+       "recovered": "2007-07-13",
+       "depth": -0.108222,
+       "months_underwater": 14.1
+      },
+      {
+       "peak": "2007-07-19",
+       "trough": "2007-08-16",
+       "recovered": "2007-10-12",
+       "depth": -0.110084,
+       "months_underwater": 2.8
+      },
+      {
+       "peak": "2015-03-24",
+       "trough": "2016-05-24",
+       "recovered": "2016-12-20",
+       "depth": -0.113845,
+       "months_underwater": 20.9
+      },
+      {
+       "peak": "2020-02-19",
+       "trough": "2020-03-19",
+       "recovered": "2020-07-09",
+       "depth": -0.121011,
+       "months_underwater": 4.6
+      },
+      {
+       "peak": "2021-03-11",
+       "trough": "2021-07-19",
+       "recovered": "2021-10-15",
+       "depth": -0.117417,
+       "months_underwater": 7.2
+      },
+      {
+       "peak": "2024-07-16",
+       "trough": "2024-08-07",
+       "recovered": "2024-11-20",
+       "depth": -0.108095,
+       "months_underwater": 4.2
+      }
+     ],
+     "band": [
+      -0.190799,
+      -0.186328,
+      -0.183975,
+      -0.171384,
+      -0.171384,
+      -0.163469,
+      -0.123237,
+      -0.121011,
+      -0.119287
+     ],
+     "bench": {
+      "S&P 500": {
+       "peak": "2007-10-09",
+       "trough": "2009-03-09",
+       "recovered": "2012-08-16",
+       "depth": -0.551894,
+       "months_underwater": 58.3
+      },
+      "80/20": {
+       "peak": "2007-10-31",
+       "trough": "2009-03-09",
+       "recovered": "2012-03-19",
+       "depth": -0.511635,
+       "months_underwater": 52.6
+      }
+     }
+    },
+    "2011-11": {
+     "start": "2011-11-01",
+     "episodes": [
+      {
+       "peak": "2015-03-24",
+       "trough": "2016-05-24",
+       "recovered": "2016-12-20",
+       "depth": -0.113845,
+       "months_underwater": 20.9
+      },
+      {
+       "peak": "2020-02-19",
+       "trough": "2020-03-19",
+       "recovered": "2020-07-09",
+       "depth": -0.121011,
+       "months_underwater": 4.6
+      },
+      {
+       "peak": "2021-03-11",
+       "trough": "2021-07-19",
+       "recovered": "2021-10-15",
+       "depth": -0.117417,
+       "months_underwater": 7.2
+      },
+      {
+       "peak": "2024-07-16",
+       "trough": "2024-08-07",
+       "recovered": "2024-11-20",
+       "depth": -0.108095,
+       "months_underwater": 4.2
+      }
+     ],
+     "band": [
+      -0.190799,
+      -0.186328,
+      -0.183975,
+      -0.163469,
+      -0.127538,
+      -0.121754,
+      -0.121011,
+      -0.119287,
+      -0.117417
+     ],
+     "bench": {
+      "S&P 500": {
+       "peak": "2020-02-19",
+       "trough": "2020-03-23",
+       "recovered": "2020-08-10",
+       "depth": -0.337173,
+       "months_underwater": 5.7
+      },
+      "80/20": {
+       "peak": "2020-02-12",
+       "trough": "2020-03-23",
+       "recovered": "2020-08-24",
+       "depth": -0.28379,
+       "months_underwater": 6.4
+      }
+     }
+    }
+   }
+  },
+  "inverse_vol": {
+   "aug_2024": -0.110196,
+   "windows": {
+    "1981-01": {
+     "start": "1981-01-01",
+     "episodes": [
+      {
+       "peak": "1987-10-05",
+       "trough": "1987-10-26",
+       "recovered": "1991-03-05",
+       "depth": -0.196208,
+       "months_underwater": 41.0
+      },
+      {
+       "peak": "2000-03-09",
+       "trough": "2000-04-14",
+       "recovered": "2002-05-03",
+       "depth": -0.152801,
+       "months_underwater": 25.8
+      },
+      {
+       "peak": "2006-05-10",
+       "trough": "2006-07-21",
+       "recovered": "2007-07-13",
+       "depth": -0.108578,
+       "months_underwater": 14.1
+      },
+      {
+       "peak": "2007-07-19",
+       "trough": "2007-08-16",
+       "recovered": "2007-10-12",
+       "depth": -0.116794,
+       "months_underwater": 2.8
+      },
+      {
+       "peak": "2011-09-06",
+       "trough": "2012-05-18",
+       "recovered": "2013-05-15",
+       "depth": -0.116009,
+       "months_underwater": 20.3
+      },
+      {
+       "peak": "2015-04-24",
+       "trough": "2016-05-24",
+       "recovered": "2017-01-04",
+       "depth": -0.116406,
+       "months_underwater": 20.4
+      },
+      {
+       "peak": "2020-02-19",
+       "trough": "2020-03-19",
+       "recovered": "2020-07-08",
+       "depth": -0.119106,
+       "months_underwater": 4.6
+      },
+      {
+       "peak": "2021-03-11",
+       "trough": "2021-07-19",
+       "recovered": "2021-10-15",
+       "depth": -0.105288,
+       "months_underwater": 7.2
+      },
+      {
+       "peak": "2024-07-16",
+       "trough": "2024-08-07",
+       "recovered": "2024-10-29",
+       "depth": -0.110196,
+       "months_underwater": 3.4
+      }
+     ],
+     "band": [
+      -0.196208,
+      -0.196208,
+      -0.196208,
+      -0.196208,
+      -0.196208,
+      -0.176619,
+      -0.174855,
+      -0.172604,
+      -0.166315
+     ],
+     "bench": {
+      "S&P 500": {
+       "peak": "2007-10-09",
+       "trough": "2009-03-09",
+       "recovered": "2012-08-16",
+       "depth": -0.551894,
+       "months_underwater": 58.3
+      },
+      "80/20": {
+       "peak": "2007-10-31",
+       "trough": "2009-03-09",
+       "recovered": "2012-03-19",
+       "depth": -0.511635,
+       "months_underwater": 52.6
+      }
+     }
+    },
+    "1995-06": {
+     "start": "1995-06-01",
+     "episodes": [
+      {
+       "peak": "2000-03-09",
+       "trough": "2000-04-14",
+       "recovered": "2002-05-03",
+       "depth": -0.152801,
+       "months_underwater": 25.8
+      },
+      {
+       "peak": "2006-05-10",
+       "trough": "2006-07-21",
+       "recovered": "2007-07-13",
+       "depth": -0.108578,
+       "months_underwater": 14.1
+      },
+      {
+       "peak": "2007-07-19",
+       "trough": "2007-08-16",
+       "recovered": "2007-10-12",
+       "depth": -0.116794,
+       "months_underwater": 2.8
+      },
+      {
+       "peak": "2011-09-06",
+       "trough": "2012-05-18",
+       "recovered": "2013-05-15",
+       "depth": -0.116009,
+       "months_underwater": 20.3
+      },
+      {
+       "peak": "2015-04-24",
+       "trough": "2016-05-24",
+       "recovered": "2017-01-04",
+       "depth": -0.116406,
+       "months_underwater": 20.4
+      },
+      {
+       "peak": "2020-02-19",
+       "trough": "2020-03-19",
+       "recovered": "2020-07-08",
+       "depth": -0.119106,
+       "months_underwater": 4.6
+      },
+      {
+       "peak": "2021-03-11",
+       "trough": "2021-07-19",
+       "recovered": "2021-10-15",
+       "depth": -0.105288,
+       "months_underwater": 7.2
+      },
+      {
+       "peak": "2024-07-16",
+       "trough": "2024-08-07",
+       "recovered": "2024-10-29",
+       "depth": -0.110196,
+       "months_underwater": 3.4
+      }
+     ],
+     "band": [
+      -0.180791,
+      -0.176619,
+      -0.174855,
+      -0.172604,
+      -0.172604,
+      -0.166315,
+      -0.158418,
+      -0.152801,
+      -0.152801
+     ],
+     "bench": {
+      "S&P 500": {
+       "peak": "2007-10-09",
+       "trough": "2009-03-09",
+       "recovered": "2012-08-16",
+       "depth": -0.551894,
+       "months_underwater": 58.3
+      },
+      "80/20": {
+       "peak": "2007-10-31",
+       "trough": "2009-03-09",
+       "recovered": "2012-03-19",
+       "depth": -0.511635,
+       "months_underwater": 52.6
+      }
+     }
+    },
+    "2006-01": {
+     "start": "2006-01-01",
+     "episodes": [
+      {
+       "peak": "2006-05-10",
+       "trough": "2006-07-21",
+       "recovered": "2007-07-13",
+       "depth": -0.108578,
+       "months_underwater": 14.1
+      },
+      {
+       "peak": "2007-07-19",
+       "trough": "2007-08-16",
+       "recovered": "2007-10-12",
+       "depth": -0.116794,
+       "months_underwater": 2.8
+      },
+      {
+       "peak": "2011-09-06",
+       "trough": "2012-05-18",
+       "recovered": "2013-05-15",
+       "depth": -0.116009,
+       "months_underwater": 20.3
+      },
+      {
+       "peak": "2015-04-24",
+       "trough": "2016-05-24",
+       "recovered": "2017-01-04",
+       "depth": -0.116406,
+       "months_underwater": 20.4
+      },
+      {
+       "peak": "2020-02-19",
+       "trough": "2020-03-19",
+       "recovered": "2020-07-08",
+       "depth": -0.119106,
+       "months_underwater": 4.6
+      },
+      {
+       "peak": "2021-03-11",
+       "trough": "2021-07-19",
+       "recovered": "2021-10-15",
+       "depth": -0.105288,
+       "months_underwater": 7.2
+      },
+      {
+       "peak": "2024-07-16",
+       "trough": "2024-08-07",
+       "recovered": "2024-10-29",
+       "depth": -0.110196,
+       "months_underwater": 3.4
+      }
+     ],
+     "band": [
+      -0.180791,
+      -0.176619,
+      -0.174855,
+      -0.172604,
+      -0.172604,
+      -0.158418,
+      -0.135501,
+      -0.128294,
+      -0.119106
+     ],
+     "bench": {
+      "S&P 500": {
+       "peak": "2007-10-09",
+       "trough": "2009-03-09",
+       "recovered": "2012-08-16",
+       "depth": -0.551894,
+       "months_underwater": 58.3
+      },
+      "80/20": {
+       "peak": "2007-10-31",
+       "trough": "2009-03-09",
+       "recovered": "2012-03-19",
+       "depth": -0.511635,
+       "months_underwater": 52.6
+      }
+     }
+    },
+    "2011-11": {
+     "start": "2011-11-01",
+     "episodes": [
+      {
+       "peak": "2015-04-24",
+       "trough": "2016-05-24",
+       "recovered": "2017-01-04",
+       "depth": -0.116406,
+       "months_underwater": 20.4
+      },
+      {
+       "peak": "2020-02-19",
+       "trough": "2020-03-19",
+       "recovered": "2020-07-08",
+       "depth": -0.119106,
+       "months_underwater": 4.6
+      },
+      {
+       "peak": "2021-03-11",
+       "trough": "2021-07-19",
+       "recovered": "2021-10-15",
+       "depth": -0.105288,
+       "months_underwater": 7.2
+      },
+      {
+       "peak": "2024-07-16",
+       "trough": "2024-08-07",
+       "recovered": "2024-10-29",
+       "depth": -0.110196,
+       "months_underwater": 3.4
+      }
+     ],
+     "band": [
+      -0.180791,
+      -0.176619,
+      -0.174855,
+      -0.158418,
+      -0.140014,
+      -0.135501,
+      -0.119106,
+      -0.115157,
+      -0.106566
+     ],
+     "bench": {
+      "S&P 500": {
+       "peak": "2020-02-19",
+       "trough": "2020-03-23",
+       "recovered": "2020-08-10",
+       "depth": -0.337173,
+       "months_underwater": 5.7
+      },
+      "80/20": {
+       "peak": "2020-02-12",
+       "trough": "2020-03-23",
+       "recovered": "2020-08-24",
+       "depth": -0.28379,
+       "months_underwater": 6.4
+      }
+     }
+    }
+   }
+  }
+ },
+ "windows": {
+  "1981-01": {
+   "start": "1981-01-01",
+   "episodes": [
+    {
+     "peak": "1987-10-05",
+     "trough": "1987-10-26",
+     "recovered": "1990-11-13",
+     "depth": -0.169757,
+     "months_underwater": 37.3
+    },
+    {
+     "peak": "2000-03-09",
+     "trough": "2000-07-28",
+     "recovered": "2002-04-02",
+     "depth": -0.13625,
+     "months_underwater": 24.8
+    },
+    {
+     "peak": "2006-05-10",
+     "trough": "2006-07-21",
+     "recovered": "2007-07-13",
+     "depth": -0.108222,
+     "months_underwater": 14.1
+    },
+    {
+     "peak": "2007-07-19",
+     "trough": "2007-08-16",
+     "recovered": "2007-10-12",
+     "depth": -0.110084,
+     "months_underwater": 2.8
+    },
+    {
+     "peak": "2015-03-24",
+     "trough": "2016-05-24",
+     "recovered": "2016-12-20",
+     "depth": -0.113845,
+     "months_underwater": 20.9
+    },
+    {
+     "peak": "2020-02-19",
+     "trough": "2020-03-19",
+     "recovered": "2020-07-09",
+     "depth": -0.121011,
+     "months_underwater": 4.6
+    },
+    {
+     "peak": "2021-03-11",
+     "trough": "2021-07-19",
+     "recovered": "2021-10-15",
+     "depth": -0.117417,
+     "months_underwater": 7.2
+    },
+    {
+     "peak": "2024-07-16",
+     "trough": "2024-08-07",
+     "recovered": "2024-11-20",
+     "depth": -0.108095,
+     "months_underwater": 4.2
+    }
+   ],
+   "band": [
+    -0.190799,
+    -0.186328,
+    -0.183975,
+    -0.171384,
+    -0.171384,
+    -0.169757,
+    -0.169757,
+    -0.169757,
+    -0.164222
+   ],
+   "bench": {
+    "S&P 500": {
+     "peak": "2007-10-09",
+     "trough": "2009-03-09",
+     "recovered": "2012-08-16",
+     "depth": -0.551894,
+     "months_underwater": 58.3
+    },
+    "80/20": {
+     "peak": "2007-10-31",
+     "trough": "2009-03-09",
+     "recovered": "2012-03-19",
+     "depth": -0.511635,
+     "months_underwater": 52.6
+    }
+   }
+  },
+  "1995-06": {
+   "start": "1995-06-01",
+   "episodes": [
+    {
+     "peak": "2000-03-09",
+     "trough": "2000-07-28",
+     "recovered": "2002-04-02",
+     "depth": -0.13625,
+     "months_underwater": 24.8
+    },
+    {
+     "peak": "2006-05-10",
+     "trough": "2006-07-21",
+     "recovered": "2007-07-13",
+     "depth": -0.108222,
+     "months_underwater": 14.1
+    },
+    {
+     "peak": "2007-07-19",
+     "trough": "2007-08-16",
+     "recovered": "2007-10-12",
+     "depth": -0.110084,
+     "months_underwater": 2.8
+    },
+    {
+     "peak": "2015-03-24",
+     "trough": "2016-05-24",
+     "recovered": "2016-12-20",
+     "depth": -0.113845,
+     "months_underwater": 20.9
+    },
+    {
+     "peak": "2020-02-19",
+     "trough": "2020-03-19",
+     "recovered": "2020-07-09",
+     "depth": -0.121011,
+     "months_underwater": 4.6
+    },
+    {
+     "peak": "2021-03-11",
+     "trough": "2021-07-19",
+     "recovered": "2021-10-15",
+     "depth": -0.117417,
+     "months_underwater": 7.2
+    },
+    {
+     "peak": "2024-07-16",
+     "trough": "2024-08-07",
+     "recovered": "2024-11-20",
+     "depth": -0.108095,
+     "months_underwater": 4.2
+    }
+   ],
+   "band": [
+    -0.190799,
+    -0.186328,
+    -0.183975,
+    -0.171384,
+    -0.171384,
+    -0.164222,
+    -0.163469,
+    -0.13625,
+    -0.134446
+   ],
+   "bench": {
+    "S&P 500": {
+     "peak": "2007-10-09",
+     "trough": "2009-03-09",
+     "recovered": "2012-08-16",
+     "depth": -0.551894,
+     "months_underwater": 58.3
+    },
+    "80/20": {
+     "peak": "2007-10-31",
+     "trough": "2009-03-09",
+     "recovered": "2012-03-19",
+     "depth": -0.511635,
+     "months_underwater": 52.6
+    }
+   }
+  },
+  "2006-01": {
+   "start": "2006-01-01",
+   "episodes": [
+    {
+     "peak": "2006-05-10",
+     "trough": "2006-07-21",
+     "recovered": "2007-07-13",
+     "depth": -0.108222,
+     "months_underwater": 14.1
+    },
+    {
+     "peak": "2007-07-19",
+     "trough": "2007-08-16",
+     "recovered": "2007-10-12",
+     "depth": -0.110084,
+     "months_underwater": 2.8
+    },
+    {
+     "peak": "2015-03-24",
+     "trough": "2016-05-24",
+     "recovered": "2016-12-20",
+     "depth": -0.113845,
+     "months_underwater": 20.9
+    },
+    {
+     "peak": "2020-02-19",
+     "trough": "2020-03-19",
+     "recovered": "2020-07-09",
+     "depth": -0.121011,
+     "months_underwater": 4.6
+    },
+    {
+     "peak": "2021-03-11",
+     "trough": "2021-07-19",
+     "recovered": "2021-10-15",
+     "depth": -0.117417,
+     "months_underwater": 7.2
+    },
+    {
+     "peak": "2024-07-16",
+     "trough": "2024-08-07",
+     "recovered": "2024-11-20",
+     "depth": -0.108095,
+     "months_underwater": 4.2
+    }
+   ],
+   "band": [
+    -0.190799,
+    -0.186328,
+    -0.183975,
+    -0.171384,
+    -0.171384,
+    -0.163469,
+    -0.123237,
+    -0.121011,
+    -0.119287
+   ],
+   "bench": {
+    "S&P 500": {
+     "peak": "2007-10-09",
+     "trough": "2009-03-09",
+     "recovered": "2012-08-16",
+     "depth": -0.551894,
+     "months_underwater": 58.3
+    },
+    "80/20": {
+     "peak": "2007-10-31",
+     "trough": "2009-03-09",
+     "recovered": "2012-03-19",
+     "depth": -0.511635,
+     "months_underwater": 52.6
+    }
+   }
+  },
+  "2011-11": {
+   "start": "2011-11-01",
+   "episodes": [
+    {
+     "peak": "2015-03-24",
+     "trough": "2016-05-24",
+     "recovered": "2016-12-20",
+     "depth": -0.113845,
+     "months_underwater": 20.9
+    },
+    {
+     "peak": "2020-02-19",
+     "trough": "2020-03-19",
+     "recovered": "2020-07-09",
+     "depth": -0.121011,
+     "months_underwater": 4.6
+    },
+    {
+     "peak": "2021-03-11",
+     "trough": "2021-07-19",
+     "recovered": "2021-10-15",
+     "depth": -0.117417,
+     "months_underwater": 7.2
+    },
+    {
+     "peak": "2024-07-16",
+     "trough": "2024-08-07",
+     "recovered": "2024-11-20",
+     "depth": -0.108095,
+     "months_underwater": 4.2
+    }
+   ],
+   "band": [
+    -0.190799,
+    -0.186328,
+    -0.183975,
+    -0.163469,
+    -0.127538,
+    -0.121754,
+    -0.121011,
+    -0.119287,
+    -0.117417
+   ],
+   "bench": {
+    "S&P 500": {
+     "peak": "2020-02-19",
+     "trough": "2020-03-23",
+     "recovered": "2020-08-10",
+     "depth": -0.337173,
+     "months_underwater": 5.7
+    },
+    "80/20": {
+     "peak": "2020-02-12",
+     "trough": "2020-03-23",
+     "recovered": "2020-08-24",
+     "depth": -0.28379,
+     "months_underwater": 6.4
+    }
+   }
+  }
+ }
+}
