@@ -404,8 +404,9 @@ def equity_pool_for(equity_tickers, as_of, standins, columns):
 # The first day of the engine's history: the older segments ("<NAME> X Daily
 # Prices.csv" and "HGER TR Daily Prices.csv", added November 18, 2026) all
 # begin here, except emerging markets (1991-10-16). QQQ_X's file has reached
-# back to 1970-01-02 since November 25, 2026; the earliest start is still set
-# by this date.
+# back to 1970-01-02 since November 25, 2026, and HGER_FUT's (HGER's history
+# before 1991, "HGER FUT Daily Prices.csv") to 1969-01-02 since the same day;
+# the earliest start is still set by this date.
 HISTORY_START = "1980-01-02"
 
 
@@ -450,6 +451,8 @@ CALENDAR_TICKER = "^GSPC"
 # way to its March 10, 1999 launch: the +0.56% credit runs through February
 # 11, 1994 and the Nasdaq-100 price index has no credit after it (QQQ 1970
 # Extension 2026-11-25, in History Extension 2026-11-18).
+# HGER_FUT, HGER's history before 1991 since November 25, 2026, carries
+# HGER's 0.68% a year in its file the same way, so it is not listed either.
 BACKFILL_FEE_ANNUAL = {
     "IBIT": 0.0025,   # iShares Bitcoin Trust, 0.25%/yr
     # GLDM (0.10%/yr) before its June 26, 2018 launch: GLD's prices already
@@ -473,10 +476,11 @@ BACKFILL_FEE_ANNUAL = {
     # HGER's 0.68%/yr fee on its index history before its February 10, 2022
     # launch: QCI is the Quantix index's hypothetical back-test and QCI_SYNTH a
     # broad commodity index, neither with a fund fee. Added November 3, 2026.
-    # Set per source since November 18, 2026: HGER_TR, the segment before
-    # 1991, already carries the 0.68%, so one rate for the whole chain would
-    # charge it twice. A custom source typed into HGER's row is charged
-    # nothing unless it is listed here.
+    # Set per source since November 18, 2026: the segment before 1991
+    # (HGER_FUT since November 25, 2026, HGER_TR before it) already carries
+    # the 0.68%, so one rate for the whole chain would charge it twice. A
+    # custom source typed into HGER's row is charged nothing unless it is
+    # listed here.
     "HGER": {"QCI": 0.0068, "QCI_SYNTH": 0.0068},
 }
 
@@ -545,8 +549,11 @@ DATA_ADJUSTMENT_NOTES = {
         "to track Bloomberg's (QCI_SYNTH), with HGER's 0.68% fee charged throughout. The Quantix back-test "
         "compounded far faster than broad commodities (about 10% a year in 2001-2025 against about 1.5%), "
         "so results that lean on HGER before 2022 flatter it; research rechecks them on the broad index alone. "
-        "Before 1991: T-bills plus 0.66 x the S&P GSCI Total Return's excess over T-bills, less the 0.68% fee "
-        "(from January 1980). The GSCI is far heavier in energy than HGER's index and held none before 1987."
+        "Before 1991: a daily commodity index built from individual futures contracts in 16 markets on fixed "
+        "sector weights, with T-bill interest added and the 0.68% fee taken out (HGER_FUT, January 2, 1969 to "
+        "January 2, 1991). It holds no energy before November 1979. The earlier stand-in, T-bills plus 0.66 x "
+        "the S&P GSCI Total Return's excess over T-bills (HGER_TR, from January 1980), can still be typed into "
+        "HGER's Backfill Rules row."
     ),
     "BTAL": (
         "Its own closes from January 2, 2019. From its September 2011 launch through 2018 it traded a few "
@@ -7558,12 +7565,21 @@ BACKFILL_DEFAULTS = [
     # BACKFILL_SOURCE_FROM keeps NAESX, ^NDX and GOLD out of the years before
     # 1990. Sources, checks and limits: "Data Adjustments.md". QQQ's segment
     # is the exception since November 25, 2026: it is QQQ's whole chain, from
-    # 1970-01-02 in the file to the fund's first day.
+    # 1970-01-02 in the file to the fund's first day. HGER's older segment is
+    # HGER_FUT since the same day (below).
     # HGER's index history carries its 0.68% fee (BACKFILL_FEE_ANNUAL) since
-    # November 3, 2026. HGER_TR before 1991: T-bills + 0.66 x the S&P GSCI
-    # Total Return's excess over T-bills, less 0.68%, scaled to QCI_SYNTH's
-    # daily volatility.
-    ("HGER",    "QCI, QCI_SYNTH, HGER_TR"),
+    # November 3, 2026. HGER_FUT before 1991, since November 25, 2026: a daily
+    # index built from individual futures contracts in 16 markets on fixed
+    # sector weights, with T-bill interest added and HGER's 0.68% a year
+    # taken out inside the file, from "HGER FUT Daily Prices.csv" (1969-01-02
+    # to 1991-01-02). It holds no energy before November 1979. Its rows before
+    # 1980 wait for the other funds' longer histories; a run uses them only on
+    # days the engine's calendar has. Built in History Extension
+    # 2026-11-18\HGER 1970 Extension 2026-11-25. HGER_TR, the stand-in it
+    # replaced (T-bills + 0.66 x the S&P GSCI Total Return's excess over
+    # T-bills, less 0.68%, scaled to QCI_SYNTH's daily volatility), stays
+    # beside the engine: type "QCI, QCI_SYNTH, HGER_TR" in this row to use it.
+    ("HGER",    "QCI, QCI_SYNTH, HGER_FUT"),
     # BTAL_NAV: BTAL's daily NAV with distributions reinvested, from "BTAL NAV
     # Daily Prices.csv" (AGF's NAV file), for September 12, 2011 to 2018, when
     # BTAL's own closes are replaced (PRIMARY_HISTORY_FROM). Added November 4,
