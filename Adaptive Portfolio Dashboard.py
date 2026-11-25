@@ -403,7 +403,9 @@ def equity_pool_for(equity_tickers, as_of, standins, columns):
 
 # The first day of the engine's history: the older segments ("<NAME> X Daily
 # Prices.csv" and "HGER TR Daily Prices.csv", added November 18, 2026) all
-# begin here, except emerging markets (1991-10-16).
+# begin here, except emerging markets (1991-10-16). QQQ_X's file has reached
+# back to 1970-01-02 since November 25, 2026; the earliest start is still set
+# by this date.
 HISTORY_START = "1980-01-02"
 
 
@@ -444,7 +446,10 @@ CALENDAR_TICKER = "^GSPC"
 # the 1981 research panel applied them: QQQ_X holds the Nasdaq-100 price
 # index's +0.56% a year credit, and GOLD_X holds GLDM's 0.10% a year
 # (Build Engine Segments.py in History Extension 2026-11-18\Engine
-# Integration 2026-11-18).
+# Integration 2026-11-18). Since November 25, 2026 QQQ_X carries QQQ all the
+# way to its March 10, 1999 launch: the +0.56% credit runs through February
+# 11, 1994 and the Nasdaq-100 price index has no credit after it (QQQ 1970
+# Extension 2026-11-25, in History Extension 2026-11-18).
 BACKFILL_FEE_ANNUAL = {
     "IBIT": 0.0025,   # iShares Bitcoin Trust, 0.25%/yr
     # GLDM (0.10%/yr) before its June 26, 2018 launch: GLD's prices already
@@ -460,7 +465,10 @@ BACKFILL_FEE_ANNUAL = {
     # February 14, 1994) gets a 1.26%/yr credit, its measured shortfall to QQQ
     # over 1999-2026; ^NDX (the Nasdaq-100 price index, no dividends) before
     # it gets 0.56%/yr, QQQ's measured lead over the price index. Added
-    # November 3, 2026.
+    # November 3, 2026. Since November 25, 2026 QQQ's default chain is QQQ_X
+    # alone, with its credit in the file, so these two rates apply only when
+    # the old chain "RYOCX, ^NDX, QQQ_X" is typed into QQQ's row. Typed, it
+    # rebuilds the history used before that date.
     "QQQ": {"RYOCX": -0.0126, "^NDX": -0.0056},
     # HGER's 0.68%/yr fee on its index history before its February 10, 2022
     # launch: QCI is the Quantix index's hypothetical back-test and QCI_SYNTH a
@@ -482,6 +490,9 @@ BACKFILL_FEE_ANNUAL = {
 #   reaches a chain; IWM_X carries IWM there.
 #   ^NDX. The Nasdaq-100 itself from its first day (January 31, 1985) and a
 #   scaled Nasdaq Composite before it are in QQQ_X, so ^NDX is used from 1990.
+#   Since November 25, 2026 QQQ's default chain no longer names ^NDX (QQQ_X
+#   runs to March 1999), so this date matters only for a typed "RYOCX, ^NDX,
+#   QQQ_X".
 #   GOLD (for GLDM only). GOLD_X carries the years before 1990: the same file
 #   with its 1984-12-27 bad print repaired and missing exchange days carried
 #   forward, and Investing.com's gold spot before the file begins on
@@ -574,11 +585,11 @@ DATA_ADJUSTMENT_NOTES = {
         "run before then that start before 2006 differ."
     ),
     "QQQ": (
-        "Before its March 10, 1999 launch: Rydex's Nasdaq-100 index fund (RYOCX), credited 1.26% a year for "
-        "its higher costs (correlation 0.999 with QQQ since 1999), and before February 1994 the Nasdaq-100 "
-        "price index plus 0.56% a year. It replaced an actively managed tech fund that the Nasdaq-100 beat "
-        "by about 10 points a year. Before January 31, 1985, when the Nasdaq-100 began: 1.35 x the Nasdaq "
-        "Composite's daily move, the least certain stretch of QQQ's history."
+        "Before its March 10, 1999 launch: the Nasdaq-100 price index, with no credit from February 14, 1994 "
+        "and plus 0.56% a year before that. Since November 25, 2026 the index carries 1994 to 1999 in place of "
+        "Rydex's Nasdaq-100 index fund (RYOCX), for a cleaner daily record. Before January 31, 1985, when the "
+        "Nasdaq-100 began: 1.35 x the Nasdaq Composite's daily move plus 0.56% a year, the least certain "
+        "stretch of QQQ's history."
     ),
     "IWM": (
         "Before its May 26, 2000 launch: Vanguard Small-Cap Index (NAESX), which tracked the Russell 2000 "
@@ -7545,7 +7556,9 @@ BACKFILL_DEFAULTS = [
     # Prices.csv", spliced at the 1981 research panel's dates. Each already
     # carries its fund's fee (see BACKFILL_FEE_ANNUAL), and
     # BACKFILL_SOURCE_FROM keeps NAESX, ^NDX and GOLD out of the years before
-    # 1990. Sources, checks and limits: "Data Adjustments.md".
+    # 1990. Sources, checks and limits: "Data Adjustments.md". QQQ's segment
+    # is the exception since November 25, 2026: it is QQQ's whole chain, from
+    # 1970-01-02 in the file to the fund's first day.
     # HGER's index history carries its 0.68% fee (BACKFILL_FEE_ANNUAL) since
     # November 3, 2026. HGER_TR before 1991: T-bills + 0.66 x the S&P GSCI
     # Total Return's excess over T-bills, less 0.68%, scaled to QCI_SYNTH's
@@ -7596,12 +7609,15 @@ BACKFILL_DEFAULTS = [
     # GLD is no longer a ticked option; this rule serves a GLD typed into the
     # custom tickers box.
     ("GLD",     "GOLD"),
-    # QQQ: RYOCX (Rydex OTC, a Nasdaq-100 index fund) from February 1994,
-    # then the Nasdaq-100 price index, fee-adjusted (BACKFILL_FEE_ANNUAL).
-    # Replaced FSPTX, an actively managed tech fund, November 3, 2026.
-    # QQQ_X before 1990: the Nasdaq-100 from its first day (January 31, 1985)
-    # and a scaled Nasdaq Composite before it, with the 0.56% credit in the file.
-    ("QQQ",     "RYOCX, ^NDX, QQQ_X"),
+    # QQQ: QQQ_X alone since November 25, 2026 ("QQQ X Daily Prices.csv", to
+    # March 10, 1999). In the file: the Nasdaq-100 price index with no credit
+    # from February 14, 1994; the index plus 0.56% a year from its first day
+    # (January 31, 1985); and 1.3477 x the Nasdaq Composite's daily move plus
+    # 0.56% before it, back to 1970 (a stand-in before the Composite began in
+    # February 1971). It replaced "RYOCX, ^NDX, QQQ_X" (RYOCX: Rydex OTC, a
+    # Nasdaq-100 index fund, from February 1994), which still works if typed.
+    # FSPTX, an actively managed tech fund, was replaced November 3, 2026.
+    ("QQQ",     "QQQ_X"),
     # NAESX: Vanguard Small-Cap Index, which tracked the Russell 2000 until 2003.
     # Replaced OTCFX, an actively managed fund that ran well ahead of the index,
     # November 3, 2026 (see NAESX Impact Check.py in Basket Research\ETF Scouting).
