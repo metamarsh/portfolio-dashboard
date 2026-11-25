@@ -1,5 +1,5 @@
 {
- "note": "Static backtest figures behind the Risk page's Drawdowns in Context section, rebuilt November 21, 2026 from the Backtest Engine (its history reaches January 1981), and again November 25, 2026 after a developed-markets series began taking the emerging markets seat among the equity candidates before 1993 (only the January 1981 window changed), under both position-sizing methods, equal risk contribution and inverse volatility: per method and window, the strategy's drawdowns of 10% or more, the worst drawdowns with slightly different settings (band, sorted), and the benchmarks' worst drawdowns. The band on every period is the January 1981 window's. 'windows' repeats the default method's windows for older readers. Refresh at the quarterly review.",
+ "note": "Static backtest figures behind the Risk page's Drawdowns in Context section, rebuilt November 21, 2026 from the Backtest Engine (its history reaches January 1981), and again November 25, 2026 after a developed-markets series began taking the emerging markets seat among the equity candidates before 1993 (only the January 1981 window changed), and a third time that afternoon after HGER's history before 1991 became HGER_FUT, a daily index built from individual futures contracts (all four windows rerun on the engine at f3a46e9; the January 1981 window changed, and the 1995-06 window in the sixth decimal), under both position-sizing methods, equal risk contribution and inverse volatility: per method and window, the strategy's drawdowns of 10% or more, the worst drawdowns with slightly different settings (band, sorted), and the benchmarks' worst drawdowns. The band on every period is the January 1981 window's. 'windows' repeats the default method's windows for older readers. Refresh at the quarterly review.",
  "version": 2,
  "backtest_end": "2026-10-30",
  "band_window": "1981-01",
@@ -14,15 +14,15 @@
       {
        "peak": "1987-10-05",
        "trough": "1987-10-26",
-       "recovered": "1989-09-29",
-       "depth": -0.167483,
-       "months_underwater": 23.8
+       "recovered": "1989-10-02",
+       "depth": -0.197799,
+       "months_underwater": 23.9
       },
       {
        "peak": "2000-03-09",
        "trough": "2000-07-28",
        "recovered": "2002-04-02",
-       "depth": -0.13625,
+       "depth": -0.136249,
        "months_underwater": 24.8
       },
       {
@@ -69,15 +69,15 @@
       }
      ],
      "band": [
-      -0.190799,
-      -0.186328,
-      -0.183975,
-      -0.171384,
-      -0.171384,
-      -0.168818,
-      -0.168818,
-      -0.167483,
-      -0.167483
+      -0.197799,
+      -0.197799,
+      -0.197799,
+      -0.197799,
+      -0.197799,
+      -0.197799,
+      -0.197799,
+      -0.197799,
+      -0.171384
      ],
      "bench": {
       "S&P 500": {
@@ -103,7 +103,7 @@
        "peak": "2000-03-09",
        "trough": "2000-07-28",
        "recovered": "2002-04-02",
-       "depth": -0.13625,
+       "depth": -0.136249,
        "months_underwater": 24.8
       },
       {
@@ -155,10 +155,10 @@
       -0.183975,
       -0.171384,
       -0.171384,
-      -0.164222,
+      -0.164221,
       -0.163469,
-      -0.13625,
-      -0.134446
+      -0.136249,
+      -0.134445
      ],
      "bench": {
       "S&P 500": {
@@ -322,9 +322,9 @@
       {
        "peak": "1987-10-05",
        "trough": "1987-10-26",
-       "recovered": "1991-02-19",
-       "depth": -0.171907,
-       "months_underwater": 40.5
+       "recovered": "1989-10-02",
+       "depth": -0.199243,
+       "months_underwater": 23.9
       },
       {
        "peak": "2000-03-09",
@@ -384,15 +384,15 @@
       }
      ],
      "band": [
-      -0.180791,
-      -0.176619,
-      -0.174855,
-      -0.172604,
-      -0.172604,
-      -0.172106,
-      -0.172106,
-      -0.171907,
-      -0.171907
+      -0.199243,
+      -0.199243,
+      -0.199243,
+      -0.199243,
+      -0.199243,
+      -0.199243,
+      -0.199243,
+      -0.199243,
+      -0.172604
      ],
      "bench": {
       "S&P 500": {
@@ -650,15 +650,15 @@
     {
      "peak": "1987-10-05",
      "trough": "1987-10-26",
-     "recovered": "1989-09-29",
-     "depth": -0.167483,
-     "months_underwater": 23.8
+     "recovered": "1989-10-02",
+     "depth": -0.197799,
+     "months_underwater": 23.9
     },
     {
      "peak": "2000-03-09",
      "trough": "2000-07-28",
      "recovered": "2002-04-02",
-     "depth": -0.13625,
+     "depth": -0.136249,
      "months_underwater": 24.8
     },
     {
@@ -705,15 +705,15 @@
     }
    ],
    "band": [
-    -0.190799,
-    -0.186328,
-    -0.183975,
-    -0.171384,
-    -0.171384,
-    -0.168818,
-    -0.168818,
-    -0.167483,
-    -0.167483
+    -0.197799,
+    -0.197799,
+    -0.197799,
+    -0.197799,
+    -0.197799,
+    -0.197799,
+    -0.197799,
+    -0.197799,
+    -0.171384
    ],
    "bench": {
     "S&P 500": {
@@ -739,7 +739,7 @@
      "peak": "2000-03-09",
      "trough": "2000-07-28",
      "recovered": "2002-04-02",
-     "depth": -0.13625,
+     "depth": -0.136249,
      "months_underwater": 24.8
     },
     {
@@ -791,10 +791,10 @@
     -0.183975,
     -0.171384,
     -0.171384,
-    -0.164222,
+    -0.164221,
     -0.163469,
-    -0.13625,
-    -0.134446
+    -0.136249,
+    -0.134445
    ],
    "bench": {
     "S&P 500": {
