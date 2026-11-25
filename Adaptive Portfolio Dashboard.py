@@ -343,6 +343,64 @@ JOIN_WHEN_AVAILABLE = {"IBIT", "BTC-USD"}
 # back to 1980 (Tyler's decision of that day).
 JOIN_WHEN_AVAILABLE_EQUITY = {"EMXC"}
 
+# An equity fund's place among the equity candidates before its own history is
+# usable, as {fund: (stand-in, first holding month of the fund itself)}. Before
+# that month the stand-in is the candidate and the fund is not; from that month
+# the fund is and the stand-in is not. They are two separate candidates, never
+# both in the pool, with no price splice between them, so each is ranked and
+# sized on its own history only. The stand-in loads with the fund
+# (download_data) from its local file, and applies only when that file is
+# there and the fund is in the equity list.
+#   EMXC before 1993: DEVXJ_X, developed markets outside the US and Japan, in
+#   dollars, from "DEVXJ X Daily Prices.csv" (January 2, 1980 to December 31,
+#   1992). Month-ends are the real monthly returns of every market in Ken
+#   French's country files except Japan (14 markets in 1980, 18 by 1989),
+#   weighted by prior year-end market values from the IFC Factbook; the days
+#   come from local indexes times the Fed's daily exchange rates (54 to 87% of
+#   the weight from March 1980), shifted each month to add up to the real
+#   return; less EMXC's 0.25% a year. Emerging markets have no usable history
+#   before October 16, 1991 and the real MSCI index for 1988 to 1991 could not
+#   be had, so Tyler set the hand-off at the nearest year start at which
+#   emerging markets are available: January 1993 (November 24, 2026). In the
+#   backtest it is a tie with leaving the seat empty (1981 to 1992: Sortino
+#   0.607 against 0.642, CAGR 11.02% against 11.10%), so it is evidence about
+#   the rules, not about EMXC. A run that starts in 1993 or later is unchanged.
+#   Record: C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System\
+#   Backtest Engine\History Extension 2026-11-18\Fourth Equity Seat Build
+#   2026-11-24\Fourth Equity Seat Build 2026-11-24.md
+# params["equity_seat_before"] replaces this rule for one run; {} turns it off,
+# which reproduces results from before November 24, 2026.
+EQUITY_SEAT_BEFORE = {"EMXC": ("DEVXJ_X", "1993-01")}
+
+
+def equity_seat_standins(params):
+    """The stand-ins that apply to a run: {fund: (stand-in, first holding month
+    of the fund)} for each fund in the run's equity list (EQUITY_SEAT_BEFORE,
+    or params["equity_seat_before"] when given). A stand-in that is itself in
+    the equity list is left alone."""
+    rule = params.get("equity_seat_before")
+    if rule is None:
+        rule = EQUITY_SEAT_BEFORE
+    eq = list(params.get("equity_tickers", []))
+    return {p: (v[0], v[1]) for p, v in (rule or {}).items() if p in eq and v[0] not in eq}
+
+
+def equity_pool_for(equity_tickers, as_of, standins, columns):
+    """The equity candidates for the holding month after as_of (a rebalance
+    month-end or a signal date): each fund, or its stand-in while the holding
+    month is before the fund's own first one and the stand-in has prices."""
+    if not standins:
+        return list(equity_tickers)
+    hold = pd.Timestamp(as_of).to_period("M") + 1
+    pool = []
+    for t in equity_tickers:
+        s = standins.get(t)
+        if s and s[0] in columns and hold < pd.Period(s[1], "M"):
+            pool.append(s[0])
+        else:
+            pool.append(t)
+    return pool
+
 # The first day of the engine's history: the older segments ("<NAME> X Daily
 # Prices.csv" and "HGER TR Daily Prices.csv", added November 18, 2026) all
 # begin here, except emerging markets (1991-10-16).
@@ -542,8 +600,11 @@ DATA_ADJUSTMENT_NOTES = {
         "real EMXC in 103 of 109 months); EEM before that; and before April 2003 Vanguard's EM index fund "
         "(VEIEX), whose index held Hong Kong and Singapore and, until 2000-2001, no Korea, Taiwan, China or "
         "India, a known limit. Before May 4, 1994: Templeton Developing Markets (TEDMX), an actively managed "
-        "fund, from October 16, 1991. Nothing earlier, so from a 1981 start the equity step picks from the "
-        "other equity funds until mid-1992."
+        "fund, from October 16, 1991. Nothing earlier. Before 1993 its place among the equity candidates is "
+        "taken by DEVXJ_X, developed markets outside the US and Japan: the real monthly returns of 14 to 18 "
+        "markets, weighted by market value, with the days from local indexes covering 54 to 87% of the weight, "
+        "less 0.25% a year (from January 1980). Emerging markets take the seat from January 1993. In the "
+        "backtest the stand-in is a tie with leaving the seat empty, so 1981 to 1992 says little about EMXC."
     ),
     "IBIT": (
         "Before its January 11, 2024 launch: Bitcoin's price (BTC-USD) less IBIT's 0.25% fee, on exchange "
@@ -976,6 +1037,12 @@ def download_data(tickers_tuple, start_date_str, force_refresh=False):
 
     # Separate local index tickers from Yahoo tickers
     local_index_data = load_local_index_data()
+    # A fund with a stand-in for its equity seat (EQUITY_SEAT_BEFORE) loads the
+    # stand-in's local series with it, so every run that has the fund has both.
+    for _seat_fund, (_seat_standin, _seat_until) in EQUITY_SEAT_BEFORE.items():
+        if (_seat_fund in unique_tickers and _seat_standin in local_index_data.columns
+                and _seat_standin not in unique_tickers):
+            unique_tickers.append(_seat_standin)
     local_tickers = [t for t in unique_tickers if t in local_index_data.columns]
     yahoo_tickers = [t for t in unique_tickers if t not in local_index_data.columns]
 
@@ -2269,6 +2336,8 @@ def run_backtest(daily_prices, monthly_prices, params):
 
     min_lookback = max(main_lookbacks)
     valid_months = monthly_prices.index[min_lookback:]
+    # The equity seat's stand-in before its fund's own history (EQUITY_SEAT_BEFORE).
+    seat_standins = equity_seat_standins(params)
 
     # Build sorted array of all trading dates for execution-day lookups.
     # Anchored to the exchange calendar, NOT daily_prices.index -- BTC-USD
@@ -2362,7 +2431,7 @@ def run_backtest(daily_prices, monthly_prices, params):
         selected_equities = []
         if equity_top_n > 0 and len(equity_tickers) > 0:
             eq_available = []
-            for t in equity_tickers:
+            for t in equity_pool_for(equity_tickers, rebal_date, seat_standins, monthly_prices.columns):
                 if t in monthly_prices.columns:
                     ps = monthly_prices[t].loc[:rebal_date].dropna()
                     # Fix 7: require enough history for BOTH equity and main lookbacks
@@ -2645,7 +2714,8 @@ def _compute_signal_at(daily_prices, monthly_prices_local, params, signal_date,
     selected_equities = []
     if equity_top_n > 0 and len(equity_tickers) > 0:
         eq_available = []
-        for t in equity_tickers:
+        for t in equity_pool_for(equity_tickers, signal_date, equity_seat_standins(params),
+                                 monthly_prices_local.columns):
             if t in monthly_prices_local.columns:
                 ps = monthly_prices_local[t].loc[:signal_date].dropna()
                 min_eq_history = max(max(equity_lookbacks), min_lookback)
@@ -2789,7 +2859,8 @@ def compute_equity_subselection_details(daily_prices, monthly_prices_local,
     # Equity ETFs with enough history to be eligible this period (same gate
     # as _compute_signal_at).
     eq_available = []
-    for t in equity_tickers:
+    for t in equity_pool_for(equity_tickers, signal_date, equity_seat_standins(params),
+                             monthly_prices_local.columns):
         if t in monthly_prices_local.columns:
             ps = monthly_prices_local[t].loc[:signal_date].dropna()
             if len(ps) > min_eq_history:
@@ -3766,6 +3837,7 @@ AE_ASSET_NAMES = {
     "TLT": "Long-term Treasuries", "GLDM": "Gold", "GLD": "Gold", "BIL": "T-bills",
     "BTAL": "Defensive equity", "HGER": "Broad commodities", "IBIT": "Bitcoin", "BTC-USD": "Bitcoin",
     "QQQ": "Nasdaq-100", "IWM": "Russell 2000", "DXJ": "Japan, yen-hedged",
+    "DEVXJ_X": "Developed markets ex US and Japan (EMXC's seat before 1993)",
     "EMXC": "Emerging markets ex China", "MNK_SYNTH": "Nikkei 225 futures (synthetic)",
     "IEI": "Intermediate Treasuries",
 }
@@ -4839,6 +4911,10 @@ def rc_fingerprint(daily_prices, params, end_date):
     on them; early in a month, fewer exist, and their count is part of it.
     """
     cols = set(params.get("fixed_tickers", [])) | set(params.get("equity_tickers", [])) | {"BIL", BENCHMARK_TICKER}
+    # A run that reaches back before an equity seat's hand-off reads the stand-in too (EQUITY_SEAT_BEFORE),
+    # so its saved runs from before the stand-in existed are not reused.
+    _start = str(params.get("backtest_start", "") or "")
+    cols |= {s for s, until in equity_seat_standins(params).values() if _start < until}
     g1 = params.get("g1") or {}
     if g1.get("enabled") and g1.get("fund"):
         cols.add(g1["fund"])
@@ -7537,7 +7613,8 @@ BACKFILL_DEFAULTS = [
     # Replaced the EEM-only backfill October 3, 2026, because EEM holds China.
     # EMXC_X before May 4, 1994: Templeton Developing Markets (TEDMX), from
     # October 16, 1991. Nothing earlier, so EMXC joins late from a 1981 start
-    # (JOIN_WHEN_AVAILABLE_EQUITY).
+    # (JOIN_WHEN_AVAILABLE_EQUITY); before 1993 DEVXJ_X takes its place among
+    # the equity candidates (EQUITY_SEAT_BEFORE).
     ("EMXC",    "EMXC_SYNTH, EEM, VEIEX, EMXC_X"),
     # DXJ_HEDGED: DXJ's own unhedged returns before its April 1, 2010 change
     # to a yen-hedged fund and EWJ's from November 1996, converted to
@@ -7878,6 +7955,15 @@ if run_button:
                         st.info(
                             f"{_lt} has prices from {_lt_first:%B %d, %Y}, so it joins the "
                             f"basket from {_join}, once it has {max_lb} months of history."
+                        )
+                    elif (_lt in EQUITY_SEAT_BEFORE and EQUITY_SEAT_BEFORE[_lt][0] in daily_prices.columns
+                          and str(backtest_start) < EQUITY_SEAT_BEFORE[_lt][1]):
+                        _seat_name, _seat_until = EQUITY_SEAT_BEFORE[_lt]
+                        _seat_month = pd.Period(_seat_until, "M").strftime("%B %Y")
+                        st.info(
+                            f"{_lt} has prices from {_lt_first:%B %d, %Y}. Until {_seat_month} its place "
+                            f"among the equity candidates is taken by {_seat_name} "
+                            f"({ae_asset_name(_seat_name)}); see Data adjustments."
                         )
                     else:
                         st.info(
