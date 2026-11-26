@@ -499,9 +499,13 @@ BACKFILL_FEE_ANNUAL = {
 #   QQQ_X".
 #   GOLD (for GLDM only). GOLD_X carries the years before 1990: the same file
 #   with its 1984-12-27 bad print repaired and missing exchange days carried
-#   forward, and Investing.com's gold spot before the file begins on
-#   1980-06-25. GLD's own rule, for a GLD typed as a custom ticker, is
-#   unchanged.
+#   forward. Before the file begins on 1980-06-25: from 1974-12-31, spot gold
+#   at the New York close worked out from COMEX gold futures (the held
+#   contract's close less the carry the futures curve itself priced in;
+#   repaired November 25, 2026, because the source's "spot" there was
+#   futures closes with a false step at each contract switch); before that,
+#   Investing.com's gold spot (the Frankfurt fixing in November and December
+#   1969). GLD's own rule, for a GLD typed as a custom ticker, is unchanged.
 # The dates are the 1981 research panel's splice dates (its FLOORS).
 BACKFILL_SOURCE_FROM = {
     "IWM": {"NAESX": "1990-01-02"},
@@ -583,8 +587,10 @@ DATA_ADJUSTMENT_NOTES = {
         "Before its June 26, 2018 launch: GLD, credited 0.30% a year for GLD's higher fee, and before GLD's "
         "November 18, 2004 launch, the daily gold price less GLDM's 0.10% fee. That price series had filed "
         "each close a day early; its dates were corrected on November 7, 2026, so backtests run before then "
-        "that start before 2006 differ. Before 1990 the same gold price with a 1984 bad print repaired, and "
-        "before June 25, 1980 Investing.com's gold spot, both less the 0.10% fee."
+        "that start before 2006 differ. Before 1990 the same gold price with a 1984 bad print repaired; "
+        "from December 31, 1974 to June 24, 1980, spot gold at the New York close worked out from COMEX gold "
+        "futures (each day's contract price less the carry the futures curve priced in); and before that, "
+        "Investing.com's gold spot. All less the 0.10% fee."
     ),
     "GLD": (
         "Before its November 18, 2004 launch: the daily gold price, with no fund fee charged. That price "
@@ -7619,8 +7625,9 @@ BACKFILL_DEFAULTS = [
     # (BACKFILL_FEE_ANNUAL). The default since November 3, 2026.
     # Keep this row above GLD's: rules run in order, and GLDM's chain must
     # read GLD's own prices before GLD's rule extends them with GOLD.
-    # GOLD_X before 1990: the same gold price with a 1984 bad print repaired,
-    # and gold spot before the GOLD file begins in June 1980.
+    # GOLD_X before 1990: the same gold price with a 1984 bad print repaired;
+    # before the GOLD file begins in June 1980, spot gold worked out from COMEX
+    # futures (1974-12-31 to 1980-06-24) and Investing.com's spot before that.
     ("GLDM",    "GLD, GOLD, GOLD_X"),
     # GLD is no longer a ticked option; this rule serves a GLD typed into the
     # custom tickers box.
