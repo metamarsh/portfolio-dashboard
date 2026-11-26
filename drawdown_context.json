@@ -1,13 +1,124 @@
 {
- "note": "Static backtest figures behind the Risk page's Drawdowns in Context section, rebuilt November 21, 2026 from the Backtest Engine (its history reaches January 1981), and again November 25, 2026 after a developed-markets series began taking the emerging markets seat among the equity candidates before 1993 (only the January 1981 window changed), and a third time that afternoon after HGER's history before 1991 became HGER_FUT, a daily index built from individual futures contracts (all four windows rerun on the engine at f3a46e9; the January 1981 window changed, and the 1995-06 window in the sixth decimal), under both position-sizing methods, equal risk contribution and inverse volatility: per method and window, the strategy's drawdowns of 10% or more, the worst drawdowns with slightly different settings (band, sorted), and the benchmarks' worst drawdowns. The band on every period is the January 1981 window's. 'windows' repeats the default method's windows for older readers. Refresh at the quarterly review.",
+ "note": "Static backtest figures behind the Backtest Engine's Drawdowns in context section. Built November 21, 2026 (history from January 1981) and rebuilt on November 25, 2026 after a developed-markets series began taking the emerging markets seat before 1993 and after HGER's history before 1991 became HGER_FUT. Rebuilt again late on November 25, 2026 for the move of the default start to February 1973: every window (1973-02, 1981-01, 1995-06, 2006-01, 2011-11) rerun on engine copies with every fund's history reaching back to about 1970, gold's 1975 to mid-1980 rows and DXJ's rows from 1980 as repaired that day, typed starts so every setting covers the same window; band_window points to 1973-02. Under both position-sizing methods, equal risk contribution and inverse volatility: per method and window, the strategy's drawdowns of 10% or more, the worst drawdowns with slightly different settings (band, sorted), and the benchmarks' worst drawdowns. The engine shades band_window's band and, when that window starts before 1981, prints the 1981-01 window's range beside it. A window's optional band_note_chart and band_note_text are the engine's words on where that window's band comes from; the engine prints them only when present, so each must be true of that window's nine runs under that method. 'windows' repeats the default method's windows for older readers. Refresh at the quarterly review.",
  "version": 2,
  "backtest_end": "2026-10-30",
- "band_window": "1981-01",
+ "band_window": "1973-02",
  "default_method": "erc",
  "methods": {
   "erc": {
    "aug_2024": -0.108095,
    "windows": {
+    "1973-02": {
+     "start": "1973-02-01",
+     "episodes": [
+      {
+       "peak": "1978-10-11",
+       "trough": "1978-11-20",
+       "recovered": "1979-09-13",
+       "depth": -0.153917,
+       "months_underwater": 11.1
+      },
+      {
+       "peak": "1979-10-01",
+       "trough": "1979-10-26",
+       "recovered": "1980-01-16",
+       "depth": -0.107515,
+       "months_underwater": 3.5
+      },
+      {
+       "peak": "1980-01-21",
+       "trough": "1980-03-27",
+       "recovered": "1981-05-29",
+       "depth": -0.262086,
+       "months_underwater": 16.2
+      },
+      {
+       "peak": "1987-10-05",
+       "trough": "1987-10-26",
+       "recovered": "1989-10-02",
+       "depth": -0.197799,
+       "months_underwater": 23.9
+      },
+      {
+       "peak": "2000-03-09",
+       "trough": "2000-07-28",
+       "recovered": "2002-04-02",
+       "depth": -0.136249,
+       "months_underwater": 24.8
+      },
+      {
+       "peak": "2006-05-10",
+       "trough": "2006-07-21",
+       "recovered": "2007-07-13",
+       "depth": -0.108222,
+       "months_underwater": 14.1
+      },
+      {
+       "peak": "2007-07-19",
+       "trough": "2007-08-16",
+       "recovered": "2007-10-12",
+       "depth": -0.110084,
+       "months_underwater": 2.8
+      },
+      {
+       "peak": "2015-03-24",
+       "trough": "2016-05-24",
+       "recovered": "2016-12-20",
+       "depth": -0.113846,
+       "months_underwater": 20.9
+      },
+      {
+       "peak": "2020-02-19",
+       "trough": "2020-03-19",
+       "recovered": "2020-07-09",
+       "depth": -0.121011,
+       "months_underwater": 4.6
+      },
+      {
+       "peak": "2021-03-11",
+       "trough": "2021-07-19",
+       "recovered": "2021-10-15",
+       "depth": -0.117417,
+       "months_underwater": 7.2
+      },
+      {
+       "peak": "2024-07-16",
+       "trough": "2024-08-07",
+       "recovered": "2024-11-20",
+       "depth": -0.108095,
+       "months_underwater": 4.2
+      }
+     ],
+     "band": [
+      -0.262086,
+      -0.262086,
+      -0.262086,
+      -0.262086,
+      -0.262086,
+      -0.262086,
+      -0.262086,
+      -0.262086,
+      -0.246669
+     ],
+     "bench": {
+      "S&P 500": {
+       "peak": "2007-10-09",
+       "trough": "2009-03-09",
+       "recovered": "2012-08-16",
+       "depth": -0.551894,
+       "months_underwater": 58.3
+      },
+      "80/20": {
+       "peak": "2007-10-31",
+       "trough": "2009-03-09",
+       "recovered": "2012-03-19",
+       "depth": -0.511636,
+       "months_underwater": 52.6
+      }
+     },
+     "band_note_chart": "all in early 1980",
+     "band_note_text": "Every one of the nine had its deepest fall in early 1980, when gold, commodities and small growth stocks broke together."
+    },
     "1981-01": {
      "start": "1981-01-01",
      "episodes": [
@@ -43,7 +154,7 @@
        "peak": "2015-03-24",
        "trough": "2016-05-24",
        "recovered": "2016-12-20",
-       "depth": -0.113845,
+       "depth": -0.113846,
        "months_underwater": 20.9
       },
       {
@@ -91,7 +202,7 @@
        "peak": "2007-10-31",
        "trough": "2009-03-09",
        "recovered": "2012-03-19",
-       "depth": -0.511635,
+       "depth": -0.511636,
        "months_underwater": 52.6
       }
      }
@@ -124,7 +235,7 @@
        "peak": "2015-03-24",
        "trough": "2016-05-24",
        "recovered": "2016-12-20",
-       "depth": -0.113845,
+       "depth": -0.113846,
        "months_underwater": 20.9
       },
       {
@@ -152,7 +263,7 @@
      "band": [
       -0.190799,
       -0.186328,
-      -0.183975,
+      -0.183976,
       -0.171384,
       -0.171384,
       -0.164221,
@@ -172,7 +283,7 @@
        "peak": "2007-10-31",
        "trough": "2009-03-09",
        "recovered": "2012-03-19",
-       "depth": -0.511635,
+       "depth": -0.511636,
        "months_underwater": 52.6
       }
      }
@@ -198,7 +309,7 @@
        "peak": "2015-03-24",
        "trough": "2016-05-24",
        "recovered": "2016-12-20",
-       "depth": -0.113845,
+       "depth": -0.113846,
        "months_underwater": 20.9
       },
       {
@@ -226,7 +337,7 @@
      "band": [
       -0.190799,
       -0.186328,
-      -0.183975,
+      -0.183976,
       -0.171384,
       -0.171384,
       -0.163469,
@@ -246,7 +357,7 @@
        "peak": "2007-10-31",
        "trough": "2009-03-09",
        "recovered": "2012-03-19",
-       "depth": -0.511635,
+       "depth": -0.511636,
        "months_underwater": 52.6
       }
      }
@@ -258,7 +369,7 @@
        "peak": "2015-03-24",
        "trough": "2016-05-24",
        "recovered": "2016-12-20",
-       "depth": -0.113845,
+       "depth": -0.113846,
        "months_underwater": 20.9
       },
       {
@@ -286,10 +397,10 @@
      "band": [
       -0.190799,
       -0.186328,
-      -0.183975,
+      -0.183976,
       -0.163469,
       -0.127538,
-      -0.121754,
+      -0.121753,
       -0.121011,
       -0.119287,
       -0.117417
@@ -306,7 +417,7 @@
        "peak": "2020-02-12",
        "trough": "2020-03-23",
        "recovered": "2020-08-24",
-       "depth": -0.28379,
+       "depth": -0.283791,
        "months_underwater": 6.4
       }
      }
@@ -316,6 +427,131 @@
   "inverse_vol": {
    "aug_2024": -0.110196,
    "windows": {
+    "1973-02": {
+     "start": "1973-02-01",
+     "episodes": [
+      {
+       "peak": "1978-09-13",
+       "trough": "1978-11-20",
+       "recovered": "1979-09-20",
+       "depth": -0.174455,
+       "months_underwater": 12.2
+      },
+      {
+       "peak": "1979-10-01",
+       "trough": "1979-10-26",
+       "recovered": "1980-01-16",
+       "depth": -0.104498,
+       "months_underwater": 3.5
+      },
+      {
+       "peak": "1980-01-21",
+       "trough": "1980-03-27",
+       "recovered": "1980-11-20",
+       "depth": -0.253114,
+       "months_underwater": 10.0
+      },
+      {
+       "peak": "1980-11-20",
+       "trough": "1980-12-11",
+       "recovered": "1981-04-30",
+       "depth": -0.115003,
+       "months_underwater": 5.3
+      },
+      {
+       "peak": "1987-10-05",
+       "trough": "1987-10-26",
+       "recovered": "1989-10-02",
+       "depth": -0.199243,
+       "months_underwater": 23.9
+      },
+      {
+       "peak": "2000-03-09",
+       "trough": "2000-04-14",
+       "recovered": "2002-05-03",
+       "depth": -0.152801,
+       "months_underwater": 25.8
+      },
+      {
+       "peak": "2006-05-10",
+       "trough": "2006-07-21",
+       "recovered": "2007-07-13",
+       "depth": -0.108578,
+       "months_underwater": 14.1
+      },
+      {
+       "peak": "2007-07-19",
+       "trough": "2007-08-16",
+       "recovered": "2007-10-12",
+       "depth": -0.116794,
+       "months_underwater": 2.8
+      },
+      {
+       "peak": "2011-09-06",
+       "trough": "2012-05-18",
+       "recovered": "2013-05-15",
+       "depth": -0.11601,
+       "months_underwater": 20.3
+      },
+      {
+       "peak": "2015-04-24",
+       "trough": "2016-05-24",
+       "recovered": "2017-01-04",
+       "depth": -0.116407,
+       "months_underwater": 20.4
+      },
+      {
+       "peak": "2020-02-19",
+       "trough": "2020-03-19",
+       "recovered": "2020-07-08",
+       "depth": -0.119106,
+       "months_underwater": 4.6
+      },
+      {
+       "peak": "2021-03-11",
+       "trough": "2021-07-19",
+       "recovered": "2021-10-15",
+       "depth": -0.105288,
+       "months_underwater": 7.2
+      },
+      {
+       "peak": "2024-07-16",
+       "trough": "2024-08-07",
+       "recovered": "2024-10-29",
+       "depth": -0.110196,
+       "months_underwater": 3.4
+      }
+     ],
+     "band": [
+      -0.253114,
+      -0.253114,
+      -0.253114,
+      -0.253114,
+      -0.253114,
+      -0.253114,
+      -0.253114,
+      -0.253114,
+      -0.23921
+     ],
+     "bench": {
+      "S&P 500": {
+       "peak": "2007-10-09",
+       "trough": "2009-03-09",
+       "recovered": "2012-08-16",
+       "depth": -0.551894,
+       "months_underwater": 58.3
+      },
+      "80/20": {
+       "peak": "2007-10-31",
+       "trough": "2009-03-09",
+       "recovered": "2012-03-19",
+       "depth": -0.511636,
+       "months_underwater": 52.6
+      }
+     },
+     "band_note_chart": "all in early 1980",
+     "band_note_text": "Every one of the nine had its deepest fall in early 1980, when gold, commodities and small growth stocks broke together."
+    },
     "1981-01": {
      "start": "1981-01-01",
      "episodes": [
@@ -351,14 +587,14 @@
        "peak": "2011-09-06",
        "trough": "2012-05-18",
        "recovered": "2013-05-15",
-       "depth": -0.116009,
+       "depth": -0.11601,
        "months_underwater": 20.3
       },
       {
        "peak": "2015-04-24",
        "trough": "2016-05-24",
        "recovered": "2017-01-04",
-       "depth": -0.116406,
+       "depth": -0.116407,
        "months_underwater": 20.4
       },
       {
@@ -406,7 +642,7 @@
        "peak": "2007-10-31",
        "trough": "2009-03-09",
        "recovered": "2012-03-19",
-       "depth": -0.511635,
+       "depth": -0.511636,
        "months_underwater": 52.6
       }
      }
@@ -439,14 +675,14 @@
        "peak": "2011-09-06",
        "trough": "2012-05-18",
        "recovered": "2013-05-15",
-       "depth": -0.116009,
+       "depth": -0.11601,
        "months_underwater": 20.3
       },
       {
        "peak": "2015-04-24",
        "trough": "2016-05-24",
        "recovered": "2017-01-04",
-       "depth": -0.116406,
+       "depth": -0.116407,
        "months_underwater": 20.4
       },
       {
@@ -472,7 +708,7 @@
       }
      ],
      "band": [
-      -0.180791,
+      -0.180792,
       -0.176619,
       -0.174855,
       -0.172604,
@@ -494,7 +730,7 @@
        "peak": "2007-10-31",
        "trough": "2009-03-09",
        "recovered": "2012-03-19",
-       "depth": -0.511635,
+       "depth": -0.511636,
        "months_underwater": 52.6
       }
      }
@@ -520,14 +756,14 @@
        "peak": "2011-09-06",
        "trough": "2012-05-18",
        "recovered": "2013-05-15",
-       "depth": -0.116009,
+       "depth": -0.11601,
        "months_underwater": 20.3
       },
       {
        "peak": "2015-04-24",
        "trough": "2016-05-24",
        "recovered": "2017-01-04",
-       "depth": -0.116406,
+       "depth": -0.116407,
        "months_underwater": 20.4
       },
       {
@@ -553,7 +789,7 @@
       }
      ],
      "band": [
-      -0.180791,
+      -0.180792,
       -0.176619,
       -0.174855,
       -0.172604,
@@ -575,7 +811,7 @@
        "peak": "2007-10-31",
        "trough": "2009-03-09",
        "recovered": "2012-03-19",
-       "depth": -0.511635,
+       "depth": -0.511636,
        "months_underwater": 52.6
       }
      }
@@ -587,7 +823,7 @@
        "peak": "2015-04-24",
        "trough": "2016-05-24",
        "recovered": "2017-01-04",
-       "depth": -0.116406,
+       "depth": -0.116407,
        "months_underwater": 20.4
       },
       {
@@ -613,11 +849,11 @@
       }
      ],
      "band": [
-      -0.180791,
+      -0.180792,
       -0.176619,
       -0.174855,
       -0.158418,
-      -0.140014,
+      -0.140016,
       -0.135501,
       -0.119106,
       -0.115157,
@@ -635,7 +871,7 @@
        "peak": "2020-02-12",
        "trough": "2020-03-23",
        "recovered": "2020-08-24",
-       "depth": -0.28379,
+       "depth": -0.283791,
        "months_underwater": 6.4
       }
      }
@@ -644,6 +880,117 @@
   }
  },
  "windows": {
+  "1973-02": {
+   "start": "1973-02-01",
+   "episodes": [
+    {
+     "peak": "1978-10-11",
+     "trough": "1978-11-20",
+     "recovered": "1979-09-13",
+     "depth": -0.153917,
+     "months_underwater": 11.1
+    },
+    {
+     "peak": "1979-10-01",
+     "trough": "1979-10-26",
+     "recovered": "1980-01-16",
+     "depth": -0.107515,
+     "months_underwater": 3.5
+    },
+    {
+     "peak": "1980-01-21",
+     "trough": "1980-03-27",
+     "recovered": "1981-05-29",
+     "depth": -0.262086,
+     "months_underwater": 16.2
+    },
+    {
+     "peak": "1987-10-05",
+     "trough": "1987-10-26",
+     "recovered": "1989-10-02",
+     "depth": -0.197799,
+     "months_underwater": 23.9
+    },
+    {
+     "peak": "2000-03-09",
+     "trough": "2000-07-28",
+     "recovered": "2002-04-02",
+     "depth": -0.136249,
+     "months_underwater": 24.8
+    },
+    {
+     "peak": "2006-05-10",
+     "trough": "2006-07-21",
+     "recovered": "2007-07-13",
+     "depth": -0.108222,
+     "months_underwater": 14.1
+    },
+    {
+     "peak": "2007-07-19",
+     "trough": "2007-08-16",
+     "recovered": "2007-10-12",
+     "depth": -0.110084,
+     "months_underwater": 2.8
+    },
+    {
+     "peak": "2015-03-24",
+     "trough": "2016-05-24",
+     "recovered": "2016-12-20",
+     "depth": -0.113846,
+     "months_underwater": 20.9
+    },
+    {
+     "peak": "2020-02-19",
+     "trough": "2020-03-19",
+     "recovered": "2020-07-09",
+     "depth": -0.121011,
+     "months_underwater": 4.6
+    },
+    {
+     "peak": "2021-03-11",
+     "trough": "2021-07-19",
+     "recovered": "2021-10-15",
+     "depth": -0.117417,
+     "months_underwater": 7.2
+    },
+    {
+     "peak": "2024-07-16",
+     "trough": "2024-08-07",
+     "recovered": "2024-11-20",
+     "depth": -0.108095,
+     "months_underwater": 4.2
+    }
+   ],
+   "band": [
+    -0.262086,
+    -0.262086,
+    -0.262086,
+    -0.262086,
+    -0.262086,
+    -0.262086,
+    -0.262086,
+    -0.262086,
+    -0.246669
+   ],
+   "bench": {
+    "S&P 500": {
+     "peak": "2007-10-09",
+     "trough": "2009-03-09",
+     "recovered": "2012-08-16",
+     "depth": -0.551894,
+     "months_underwater": 58.3
+    },
+    "80/20": {
+     "peak": "2007-10-31",
+     "trough": "2009-03-09",
+     "recovered": "2012-03-19",
+     "depth": -0.511636,
+     "months_underwater": 52.6
+    }
+   },
+   "band_note_chart": "all in early 1980",
+   "band_note_text": "Every one of the nine had its deepest fall in early 1980, when gold, commodities and small growth stocks broke together."
+  },
   "1981-01": {
    "start": "1981-01-01",
    "episodes": [
@@ -679,7 +1026,7 @@
      "peak": "2015-03-24",
      "trough": "2016-05-24",
      "recovered": "2016-12-20",
-     "depth": -0.113845,
+     "depth": -0.113846,
      "months_underwater": 20.9
     },
     {
@@ -727,7 +1074,7 @@
      "peak": "2007-10-31",
      "trough": "2009-03-09",
      "recovered": "2012-03-19",
-     "depth": -0.511635,
+     "depth": -0.511636,
      "months_underwater": 52.6
     }
    }
@@ -760,7 +1107,7 @@
      "peak": "2015-03-24",
      "trough": "2016-05-24",
      "recovered": "2016-12-20",
-     "depth": -0.113845,
+     "depth": -0.113846,
      "months_underwater": 20.9
     },
     {
@@ -788,7 +1135,7 @@
    "band": [
     -0.190799,
     -0.186328,
-    -0.183975,
+    -0.183976,
     -0.171384,
     -0.171384,
     -0.164221,
@@ -808,7 +1155,7 @@
      "peak": "2007-10-31",
      "trough": "2009-03-09",
      "recovered": "2012-03-19",
-     "depth": -0.511635,
+     "depth": -0.511636,
      "months_underwater": 52.6
     }
    }
@@ -834,7 +1181,7 @@
      "peak": "2015-03-24",
      "trough": "2016-05-24",
      "recovered": "2016-12-20",
-     "depth": -0.113845,
+     "depth": -0.113846,
      "months_underwater": 20.9
     },
     {
@@ -862,7 +1209,7 @@
    "band": [
     -0.190799,
     -0.186328,
-    -0.183975,
+    -0.183976,
     -0.171384,
     -0.171384,
     -0.163469,
@@ -882,7 +1229,7 @@
      "peak": "2007-10-31",
      "trough": "2009-03-09",
      "recovered": "2012-03-19",
-     "depth": -0.511635,
+     "depth": -0.511636,
      "months_underwater": 52.6
     }
    }
@@ -894,7 +1241,7 @@
      "peak": "2015-03-24",
      "trough": "2016-05-24",
      "recovered": "2016-12-20",
-     "depth": -0.113845,
+     "depth": -0.113846,
      "months_underwater": 20.9
     },
     {
@@ -922,10 +1269,10 @@
    "band": [
     -0.190799,
     -0.186328,
-    -0.183975,
+    -0.183976,
     -0.163469,
     -0.127538,
-    -0.121754,
+    -0.121753,
     -0.121011,
     -0.119287,
     -0.117417
@@ -942,7 +1289,7 @@
      "peak": "2020-02-12",
      "trough": "2020-03-23",
      "recovered": "2020-08-24",
-     "depth": -0.28379,
+     "depth": -0.283791,
      "months_underwater": 6.4
     }
    }

@@ -335,9 +335,10 @@ JOIN_WHEN_AVAILABLE = {"IBIT", "BTC-USD"}
 
 # Equity funds that may start after the backtest start. Emerging markets have
 # no usable daily history before October 16, 1991 (EMXC_X, Templeton
-# Developing Markets), so from a 1981 start the equity step picks from the
-# other equity funds until EMXC has more month-ends than the longest lookback
-# (mid-1992 at 2/8), which run_backtest already does for any equity fund. The
+# Developing Markets), so from an earlier start (1973-02 by default since
+# November 25, 2026) the equity step picks from the other equity funds until
+# EMXC has more month-ends than the longest lookback (mid-1992 at 2/8), which
+# run_backtest already does for any equity fund. The
 # data check lets one through only while enough other equity funds have
 # history to fill the equity picks. Added November 18, 2026, with the history
 # back to 1980 (Tyler's decision of that day).
@@ -352,13 +353,18 @@ JOIN_WHEN_AVAILABLE_EQUITY = {"EMXC"}
 # (download_data) from its local file, and applies only when that file is
 # there and the fund is in the equity list.
 #   EMXC before 1993: DEVXJ_X, developed markets outside the US and Japan, in
-#   dollars, from "DEVXJ X Daily Prices.csv" (January 2, 1980 to December 31,
-#   1992). Month-ends are the real monthly returns of every market in Ken
-#   French's country files except Japan (14 markets in 1980, 18 by 1989),
-#   weighted by prior year-end market values from the IFC Factbook; the days
-#   come from local indexes times the Fed's daily exchange rates (54 to 87% of
-#   the weight from March 1980), shifted each month to add up to the real
-#   return; less EMXC's 0.25% a year. Emerging markets have no usable history
+#   dollars, from "DEVXJ X Daily Prices.csv" (December 31, 1969 to December
+#   31, 1992). From 1980, month-ends are the real monthly returns of every
+#   market in Ken French's country files except Japan (14 markets in 1980, 18
+#   by 1989), weighted by prior year-end market values from the IFC Factbook;
+#   the days come from local indexes times the Fed's daily exchange rates (54
+#   to 87% of the weight from March 1980), shifted each month to add up to the
+#   real return; less EMXC's 0.25% a year. Before 1980: French's country files
+#   from 1975 (MSCI for Canada in 1975 and 1976) and three MSCI regional
+#   indexes (Europe, Pacific ex Japan, Canada) for 1970 to 1974, with daily
+#   closes for only 28 to 58% of the weight; good enough for ranking, flagged
+#   for sizing (Fourth Equity Seat Build 2026-11-24\Extension to 1970
+#   2026-11-25.md). Emerging markets have no usable history
 #   before October 16, 1991 and the real MSCI index for 1988 to 1991 could not
 #   be had, so Tyler set the hand-off at the nearest year start at which
 #   emerging markets are available: January 1993 (November 24, 2026). In the
@@ -401,37 +407,46 @@ def equity_pool_for(equity_tickers, as_of, standins, columns):
             pool.append(t)
     return pool
 
-# The first day of the engine's history: the older segments ("<NAME> X Daily
-# Prices.csv" and "HGER TR Daily Prices.csv", added November 18, 2026) all
-# begin here, except emerging markets (1991-10-16). QQQ_X's file has reached
-# back to 1970-01-02 since November 25, 2026, and HGER_FUT's (HGER's history
-# before 1991, "HGER FUT Daily Prices.csv") to 1969-01-02 since the same day;
-# the earliest start is still set by this date.
-HISTORY_START = "1980-01-02"
+# The warm-up anchor: earliest_backtest_start counts the lookback and the
+# volatility window forward from this month. At the standing settings the
+# first reported month's risk window opens here (its first daily return is
+# dated 1972-02-01, measured from the close of 1972-01-31) and its lookbacks
+# open later. The unreported rebalance one month before the start reads
+# earlier rows; it sets only the first month's starting weights. 1980-01-02
+# until the switch to a 1973 start (November 25, 2026).
+HISTORY_START = "1972-02-01"
+# The earliest cleared month: a blank start never holds before it, whatever the
+# lookback and volatility window allow (November 25, 2026, Tyler's decision).
+FIRST_HOLD_FLOOR = "1973-02"
 
 
 def earliest_backtest_start(main_lookbacks, vol_months):
     """The earliest backtest start, as "YYYY-MM", that the default basket's
-    history allows for a main lookback and a volatility window.
+    history allows for a main lookback and a volatility window, and never
+    before FIRST_HOLD_FLOOR.
 
     Two things have to be in place by the first month held. The app's data
     check wants each fund's first price a full month before the longest
     lookback begins, which is the longest lookback plus two months after
     HISTORY_START's month. Position sizing wants a full volatility window,
-    which is vol_months after it. The later of the two wins: 1981-01 at 2/8
-    and 12 months, 1981-02 at 2/11, 1981-07 with an 18-month window. A blank
-    start box means this month (added November 18, 2026). A custom fund with
-    a shorter history still has to pass the data check.
+    which is vol_months after it. The later of the two wins, and then the
+    later of that and FIRST_HOLD_FLOOR: 1973-02 at 2/8 with a 12-month
+    window or any shorter one, 1973-03 at 2/11, 1973-08 with an 18-month
+    window. A blank start box means this month (added November 18, 2026).
+    A custom fund with a shorter history still has to pass the data check.
     """
     first = pd.Period(HISTORY_START, "M")
-    return str(first + max(int(vol_months), int(max(main_lookbacks)) + 2))
+    return str(max(pd.Period(FIRST_HOLD_FLOOR, "M"),
+                   first + max(int(vol_months), int(max(main_lookbacks)) + 2)))
 
 # Calendar anchor. The trading calendar is every weekday on which an
 # exchange-listed ticker printed a close (market_trading_dates), and local
 # price files do not vote. Before 1983 the default basket has no Yahoo ticker
 # that should be trusted to mark the days, so the S&P 500 index is downloaded
 # with every run and votes like any other ticker. It is never traded, ranked
-# or shown. Added November 18, 2026.
+# or shown. Added November 18, 2026. Checked November 25, 2026 on the cached
+# prices: before 1980 it is the only ticker with prices, and through 1979 the
+# calendar equals the days in the long price files.
 CALENDAR_TICKER = "^GSPC"
 
 # Expense-ratio adjustment applied to a backfilled (synthetic) segment, by
@@ -553,9 +568,10 @@ DATA_ADJUSTMENT_NOTES = {
         "to track Bloomberg's (QCI_SYNTH), with HGER's 0.68% fee charged throughout. The Quantix back-test "
         "compounded far faster than broad commodities (about 10% a year in 2001-2025 against about 1.5%), "
         "so results that lean on HGER before 2022 flatter it; research rechecks them on the broad index alone. "
-        "Before 1991: a daily commodity index built from individual futures contracts in 16 markets on fixed "
-        "sector weights, with T-bill interest added and the 0.68% fee taken out (HGER_FUT, January 2, 1969 to "
-        "January 2, 1991). It holds no energy before November 1979. The earlier stand-in, T-bills plus 0.66 x "
+        "Before 1991: a daily commodity index built from individual futures contracts in up to 16 markets "
+        "(10 to 15 in the 1970s) on fixed sector weights, with T-bill interest added and the 0.68% fee taken "
+        "out (HGER_FUT, January 2, 1969 to January 2, 1991). It holds no energy before November 1979, so its "
+        "1970s rows are farm goods and metals only. The earlier stand-in, T-bills plus 0.66 x "
         "the S&P GSCI Total Return's excess over T-bills (HGER_TR, from January 1980), can still be typed into "
         "HGER's Backfill Rules row."
     ),
@@ -563,25 +579,31 @@ DATA_ADJUSTMENT_NOTES = {
         "Its own closes from January 2, 2019. From its September 2011 launch through 2018 it traded a few "
         "hundred shares a day, often none, so its closes were stale marks that strayed from the fund's value "
         "and made it look more volatile than it was; its daily NAV (AGF's, distributions reinvested) is used "
-        "instead. Before launch, from January 1980: T-bills + 0.873 x the daily US low-beta factor of "
+        "instead. Before launch: T-bills + 0.873 x the daily US low-beta factor of "
         "Jensen, Kelly and Pedersen (Journal of Finance 2023; jkpfactors.com, CC BY-NC 4.0), less 1.4% a "
         "year for fund costs. Out of sample it tracks the real fund at a 0.92 monthly correlation, and BTAL's "
         "own index back-test (2001-2011) at 0.97, still the least certain stand-in in the basket. Until "
         "November 18, 2026 a formula on AQR's Betting Against Beta factor (BTAL_SYNTH) carried those years; "
-        "it ran about 4 points a year richer over 1981-2011 and got 2008 backwards."
+        "it ran about 4 points a year richer over 1981-2011 and got 2008 backwards. The same formula reaches "
+        "back to 1969, and over 1969 to 1979 it earned about what T-bills paid. Two years fall outside anything "
+        "the real fund has done since 2011: it gained 30% in 1970, and in 1974 it only matched T-bills while US "
+        "stocks as a whole fell 28%."
     ),
     "BIL": (
         "Before its May 30, 2007 launch: the 13-week T-bill's total return less BIL's fee (tracking error "
         "0.15% a year against BIL since 2007). It replaced a 1-3 year Treasury fund 5.5 times as volatile, "
         "which had shrunk the cash weight in defensive months. BIL is also the risk-free rate. Before 1990 "
-        "the same build, from January 1980."
+        "the same build, back to January 1969. For 1969 to 1979 its bill rate matches the Federal Reserve's "
+        "published rate on every day, and each year lands within 0.2 points of the published T-bill return."
     ),
     "TLT": (
         "Before its July 30, 2002 launch: 20 to 30-year Treasuries priced off the Federal Reserve's "
         "zero-coupon curve, less TLT's 0.15% fee (tracking error 1.5% a year against TLT since 2002). It "
         "replaced a 10-plus-year bond fund with about 15% less duration. Before January 31, 1990: a 30-year "
-        "Treasury priced off Yahoo's 30-year yield, scaled to the same duration, less the fee (from January "
-        "1980; the Federal Reserve's curve has no 30-year point before November 1985)."
+        "Treasury priced off Yahoo's 30-year yield, scaled to the same duration, less the fee (from February "
+        "16, 1977; the Federal Reserve's curve has no 30-year point before November 1985). Before that it is "
+        "priced mainly off the 20-year yield, a rougher stand-in cleared for months held from February 1973; "
+        "its earlier rows only warm up the first readings."
     ),
     "GLDM": (
         "Before its June 26, 2018 launch: GLD, credited 0.30% a year for GLD's higher fee, and before GLD's "
@@ -590,7 +612,8 @@ DATA_ADJUSTMENT_NOTES = {
         "that start before 2006 differ. Before 1990 the same gold price with a 1984 bad print repaired; "
         "from December 31, 1974 to June 24, 1980, spot gold at the New York close worked out from COMEX gold "
         "futures (each day's contract price less the carry the futures curve priced in); and before that, "
-        "Investing.com's gold spot. All less the 0.10% fee."
+        "Investing.com's gold spot (from November 3, 1969). All less the 0.10% fee. Americans could not own "
+        "gold bullion until December 31, 1974, so gold held before 1975 is on paper only."
     ),
     "GLD": (
         "Before its November 18, 2004 launch: the daily gold price, with no fund fee charged. That price "
@@ -602,13 +625,16 @@ DATA_ADJUSTMENT_NOTES = {
         "and plus 0.56% a year before that. Since November 25, 2026 the index carries 1994 to 1999 in place of "
         "Rydex's Nasdaq-100 index fund (RYOCX), for a cleaner daily record. Before January 31, 1985, when the "
         "Nasdaq-100 began: 1.35 x the Nasdaq Composite's daily move plus 0.56% a year, the least certain "
-        "stretch of QQQ's history."
+        "stretch of QQQ's history. The Nasdaq Composite starts on February 5, 1971, and the file follows its "
+        "daily moves from February 8; the days before that are a fitted stand-in."
     ),
     "IWM": (
         "Before its May 26, 2000 launch: Vanguard Small-Cap Index (NAESX), which tracked the Russell 2000 "
         "until 2003 (tracking error 2.6% a year). It replaced an active small-cap fund that ran about 5.6 "
         "points a year ahead of IWM. Before 1990: Ken French's small-company portfolios fitted to IWM, less "
-        "1.52% a year (Yahoo's NAESX prices from the 1980s miss distributions, so they are not used)."
+        "1.52% a year (Yahoo's NAESX prices from the 1980s miss distributions, so they are not used). The "
+        "same build reaches back to January 1970. Small stocks traded thinly in those years, so their daily "
+        "prices make them look calmer than their monthly prices do."
     ),
     "DXJ": (
         "DXJ was an unhedged Japan dividend fund until March 31, 2010, so its own prices start April 1, "
@@ -616,7 +642,9 @@ DATA_ADJUSTMENT_NOTES = {
         "hedged Nikkei 225 futures proxy before November 1996 (the same conversion tracks the real hedged "
         "MSCI Japan fund at a 0.97 correlation). Six misdated 2008 yen closes in Yahoo's data are repaired. "
         "Before February 1993: the Nikkei 225 with dividends, yen-hedged at the Japan and US short rates "
-        "(from January 1980). No such fund existed then, and it compounds 29% a year over 1985 to 1989."
+        "(from January 1969). No such fund existed then, and it compounds 29% a year over 1985 to 1989. "
+        "Before 1980 the prices are Nikkei's own closes, but the hedge is only on paper: the yen was fixed at "
+        "360 to the dollar until August 1971, and Japan limited money moving in and out all decade."
     ),
     "EMXC": (
         "Before its July 2017 launch: a synthetic MSCI Emerging Markets ex China, EEM less a China sleeve "
@@ -627,30 +655,38 @@ DATA_ADJUSTMENT_NOTES = {
         "fund, from October 16, 1991. Nothing earlier. Before 1993 its place among the equity candidates is "
         "taken by DEVXJ_X, developed markets outside the US and Japan: the real monthly returns of 14 to 18 "
         "markets, weighted by market value, with the days from local indexes covering 54 to 87% of the weight, "
-        "less 0.25% a year (from January 1980). Emerging markets take the seat from January 1993. In the "
+        "less 0.25% a year (from January 1980). It reaches back to 1970 on rougher inputs: three MSCI regional "
+        "indexes before 1975, and for most of the 1970s daily closes from only the UK and Germany, so most of "
+        "each day's move then is estimated. Emerging markets take the seat from January 1993. In the "
         "backtest the stand-in is a tie with leaving the seat empty, so 1981 to 1992 says little about EMXC."
     ),
     "IBIT": (
         "Before its January 11, 2024 launch: Bitcoin's price (BTC-USD) less IBIT's 0.25% fee, on exchange "
         "trading days only. It joins the basket once it has more month-ends of history than the longest "
-        "lookback (June 2015 from a 1995 start). Bitcoin is in the basket with hindsight, since it survived "
+        "lookback (June 2015 with the 2/8 lookback). Bitcoin is in the basket with hindsight, since it survived "
         "and soared, so its early gains are partly in-sample."
     ),
     "AOR": (
         "The 60/40 benchmark line uses Vanguard's balanced fund VSMGX through May 2009, because AOR traded "
         "too thinly at first to track its holdings (it fell 16.2% on December 1, 2008, against VSMGX's 6.1%). "
-        "Before September 30, 1994: 60% US stocks and 40% a 1 to 10-year Treasury ladder, less 0.15%. It is "
+        "Before September 30, 1994: 60% US stocks and 40% a 1 to 10-year Treasury ladder, less 0.15%, back to "
+        "1969. Before August 16, 1971 the ladder holds 1 to 7-year bonds, since the Federal Reserve's curve has "
+        "no longer yields then. It is "
         "US-only, and such mixes have run about 1.0 point a year ahead of the real global fund since 1994."
     ),
     "AOA": (
         "The 80/20 benchmark line uses Vanguard's VASGX through May 2009, because AOA traded too thinly at "
         "first to track its holdings. Before September 30, 1994: 80% US stocks and 20% a 1 to 10-year "
-        "Treasury ladder, less 0.15%. It is US-only, and such mixes have run about 1.3 points a year ahead "
+        "Treasury ladder, less 0.15%, back to 1969. Before August 16, 1971 the ladder holds 1 to 7-year bonds, "
+        "since the Federal Reserve's curve has no longer yields then. It is US-only, and such mixes have run "
+        "about 1.3 points a year ahead "
         "of the real global fund since 1994."
     ),
     "SPY": (
         "Before its January 29, 1993 first close: the S&P 500 with dividends, less SPY's 0.0945% fee (a "
-        "0.998 monthly correlation with SPY since 1993)."
+        "0.998 monthly correlation with SPY since 1993). It reaches back to 1969, with eight misprinted Yahoo "
+        "closes from 1970 to 1975 repaired, and each year from 1969 to 1979 lands within 0.3 points of the "
+        "published S&P 500 total return."
     ),
     "MNK_SYNTH": (
         "A synthetic for the CME Micro Nikkei 225 future, not a fund: the full-size dollar Nikkei future's "
@@ -659,8 +695,9 @@ DATA_ADJUSTMENT_NOTES = {
     ),
     "IEI": (
         "Used by the G1 cash rule. Before its January 11, 2007 first close: a 3 to 7-year Treasury ladder "
-        "priced off the Federal Reserve's curve, less IEI's 0.15% fee, from January 1980 (tracking error "
-        "0.46% a year against IEI since 2007). Until November 18, 2026 Vanguard Intermediate-Term Treasury "
+        "priced off the Federal Reserve's curve, less IEI's 0.15% fee, from January 1969 (tracking error "
+        "0.46% a year against IEI since 2007). Before August 16, 1971 its 7-year bond is less certain, though "
+        "the ladder as a whole checks out. Until November 18, 2026 Vanguard Intermediate-Term Treasury "
         "(VFITX) carried those years, as in the November 7, 2026 test of the rule; type VFITX as the G1 "
         "backfill to reproduce it."
     ),
@@ -751,7 +788,7 @@ ERC_KEEP = ("BIL",)               # keep their inverse-volatility weight, outsid
 # The sidebar's G1 Cash Rule section turns it on and changes any setting.
 # Since November 18, 2026 (Tyler's decision) IEI_X carries IEI before its
 # January 11, 2007 first close, in VFITX's place: a 3 to 7-year Treasury
-# ladder off the Federal Reserve curve, less IEI's 0.15%, from 1980. Type
+# ladder off the Federal Reserve curve, less IEI's 0.15%, from 1969. Type
 # VFITX into the G1 section's backfill box to reproduce the November 7 test.
 G1_DEFAULTS = {
     "fund": "IEI",
@@ -965,9 +1002,9 @@ KNOWN_BAD_PRINTS = [
 #   show -3.16% that day, when the 5-year Treasury yield barely moved, and
 #   +7.31% for calendar 1993 against Vanguard's published +11.43%. Factor
 #   10.71 / (10.71 + 0.413) = 0.96287; repaired, 1993 reads +11.45%. Found
-#   November 18, 2026. VFITX carries IEI before January 2007 for the G1 cash
-#   rule only, and the print sits before any start the default basket allows
-#   (1995-02), so no run changed. Evidence: C:\Users\tyler\OneDrive\PROJECTS\
+#   November 18, 2026. VFITX carried IEI before January 2007 for the G1 cash
+#   rule only, and the print sat before any start the default basket then
+#   allowed (1995-02), so no run changed. Evidence: C:\Users\tyler\OneDrive\PROJECTS\
 #   Strategy Backtesting System\Backtest Engine\History Extension 2026-11-18\
 #   VFITX Print Check\
 KNOWN_MISSING_DISTRIBUTIONS = [
@@ -4294,9 +4331,13 @@ def ae_fig_drawdowns(strat_returns, bench_returns, balanced_data, daily_equity, 
 # 2026: it belongs here, built from the run; it left the public Chart Dashboard the same day.
 # The shaded zone is a fixed study, not this run: the worst daily drawdowns of the standing settings (2/8 main
 # lookback, top 4, 3 of 4 equities on 1/3, 12-month window, with IBIT, net of 0.05% a side) and their eight nearby
-# settings (short leg 1 to 3, long leg 7 to 9) since January 1981, under the run's position sizing, shaded to at
-# least 20%. It comes from drawdown_context.json beside this file (built by Basket Research\ETF Scouting\Drawdown
-# Context 1981 2026-11-21\Build Drawdown Context.py) and is left off with leverage on, since the study is unlevered.
+# settings (short leg 1 to 3, long leg 7 to 9) from the start of the file's band window (band_window) through its
+# backtest_end, under the run's position sizing, shaded to at least 20%. When the band window starts before
+# DDC_SINCE_WINDOW, that window's range is printed beside it, and a window's optional band_note_chart and
+# band_note_text are printed when the file has them (ddc_band; November 25, 2026). It comes from
+# drawdown_context.json beside this file (first built by Basket Research\ETF Scouting\Drawdown Context 1981
+# 2026-11-21\Build Drawdown Context.py, rebuilt since from dated copies of its scripts) and is left off with
+# leverage on, since the study is unlevered.
 # When the Chart Dashboard's published series sits beside this folder (..\Portfolio Hist Val Reconstruction\
 # asymmetric_edge_series.csv, on Tyler's PC), a "Live account now" bar adds the live account's decline from its
 # high; the deployed copy has no such file and draws without it. Drawdowns are measured on exchange days only: the
@@ -4313,6 +4354,7 @@ DDC_BAND = "#F1EFF8"
 DDC_BAND_EDGE = "#C9C3E3"
 DDC_BENCH = [("80/20", "AOA"), ("S&P 500", "SPY")]
 DDC_SIZING_WORDS = {"erc": "equal risk contribution", "inverse_vol": "inverse volatility"}
+DDC_SINCE_WINDOW = "1981-01"  # printed beside a band window that starts before it (November 25, 2026)
 
 
 def ddc_episodes(e):
@@ -4361,25 +4403,67 @@ def ddc_row_label(primary, secondary, live=False):
 
 
 def ddc_band(sizing, leverage_on):
-    """The fixed study's shaded range for this position sizing: (dict(lo, hi, text), note), or (None, note)."""
+    """The fixed study's shaded range for this position sizing: (dict(lo, hi, text), note), or (None, note).
+    Everything that can change is read from drawdown_context.json: the band window (band_window), its first
+    month, the study's last month (backtest_end), this sizing's range, the DDC_SINCE_WINDOW window's range when
+    the band window starts before it, and the band window's optional words on its episode (band_note_chart on
+    the chart, band_note_text under the heading), printed only when the file has them. Wording of November 25,
+    2026 (Tyler, 9:23 p.m.)."""
     if leverage_on:
         return None, "The shaded zone is left off with leverage on: the study behind it is unlevered."
     try:
         with open(DDC_FILE, encoding="utf-8-sig") as fh:
             data = json.load(fh)
-        win = data["methods"][sizing]["windows"][data.get("band_window", "1981-01")]
-        vals = [float(v) * 100.0 for v in win["band"]]
-        start = pd.Timestamp(win["start"])
     except Exception:
         return None, ""
+    words = DDC_SIZING_WORDS.get(sizing, sizing)
+    band_window = data.get("band_window")
+    if not band_window:
+        return None, "The shaded zone is not drawn: drawdown_context.json names no band window."
+    try:
+        windows = data["methods"][sizing]["windows"]
+    except Exception:
+        return None, f"The shaded zone is not drawn: drawdown_context.json has no windows for {words}."
+    if band_window not in windows:
+        return None, f"The shaded zone is not drawn: drawdown_context.json has no {band_window} window for {words}."
+    try:
+        win = windows[band_window]
+        vals = [float(v) * 100.0 for v in win["band"]]
+        start = pd.Timestamp(win["start"])
+        end = pd.Timestamp(data["backtest_end"])
+    except Exception:
+        return None, ""
+    since = None
+    if DDC_SINCE_WINDOW in windows and start < pd.Period(DDC_SINCE_WINDOW, "M").to_timestamp():
+        try:
+            s_vals = [float(v) * 100.0 for v in windows[DDC_SINCE_WINDOW]["band"]]
+            since = (pd.Timestamp(windows[DDC_SINCE_WINDOW]["start"]), -max(s_vals), -min(s_vals))
+        except Exception:
+            since = None
+
+    def pct(x):
+        return ae_neg(f"-{x:.1f}%")
+
     lo, hi = -max(vals), -min(vals)
-    lo_t, hi_t, to_t = ae_neg(f"-{lo:.1f}%"), ae_neg(f"-{hi:.1f}%"), ae_neg(f"-{DDC_BAND_TO:.0f}%")
-    text = (f"<b>Shaded:</b> standing settings and<br>8 nearby, since {start:%b %Y},<br>{lo_t} to {hi_t}"
-            + (f", shown to {to_t}" if hi < DDC_BAND_TO else ""))
-    note = (f"Shaded: the worst daily drawdowns of the standing settings (2/8) and their eight nearby settings since "
-            f"{start:%B %Y}, with Bitcoin, under {DDC_SIZING_WORDS.get(sizing, sizing)}, {lo_t} to {hi_t}"
-            + (f", shaded to {to_t}" if hi < DDC_BAND_TO else "")
-            + ". A fixed study, not this run; before 1995 it rests on stand-in histories.")
+    to_t = ae_neg(f"-{DDC_BAND_TO:.0f}%")
+    note_chart = str(win.get("band_note_chart") or "").strip()
+    note_text = str(win.get("band_note_text") or "").strip()
+    text = (f"<b>Shaded:</b> the worst daily drawdowns<br>of the standing settings and 8 nearby<br>"
+            f"in backtests, {start:%b %Y} to {end:%b %Y}:<br>{pct(lo)} to {pct(hi)}"
+            + (f", shown to {to_t}" if hi < DDC_BAND_TO else "")
+            + (f", {ae_esc(note_chart)}" if note_chart else "") + "."
+            + (f"<br>Since {since[0]:%Y}: {pct(since[1])} to {pct(since[2])}." if since else "")
+            + "<br>Context, not a limit on losses.")
+    note = (f"Shaded: the deepest fall from a high to a later low, on daily closes, in backtests of the standing "
+            f"settings (2/8) and their eight nearby settings from {start:%B %Y} through {end:%B %Y}, with Bitcoin, "
+            f"under {words}: {pct(lo)} to {pct(hi)}"
+            + (f", shaded to {to_t}" if hi < DDC_BAND_TO else "") + "."
+            + (f" {note_text}" if note_text else "")
+            + (f" Counting only falls that began in {since[0]:%Y} or later, the range is {pct(since[1])} to "
+               f"{pct(since[2])}." if since else "")
+            + " A fixed study that does not change with this run's settings. For the years before a fund existed, "
+              "its returns come from a stand-in (an index, an older fund or a market price), and the stand-ins are "
+              "weakest before 1980. The shading is context from the past, not a limit on future losses.")
     return dict(lo=lo, hi=max(hi, DDC_BAND_TO), text=text), note
 
 
@@ -6580,7 +6664,8 @@ def ds_prepare(params, run_rules, plan, run_daily, strat_returns, strat_metrics,
     if error or plan is None:
         state["error"] = error or "Its prices were not prepared."
         return state
-    # The default settings cannot start before their own lookback and volatility window allow.
+    # The default settings cannot start before their own lookback and volatility window allow, or before
+    # FIRST_HOLD_FLOOR (earliest_backtest_start applies both).
     start = max(str(params["backtest_start"]),
                 earliest_backtest_start(MAIN_LOOKBACK_OPTIONS[DS_MAIN_LOOKBACK][0], DS_VOL_MONTHS))
     base_params = ds_default_params(start, end)
@@ -7215,7 +7300,7 @@ with st.sidebar.expander("G1 Cash Rule", expanded=False):
             "Its backfill chain (before the fund's launch)",
             value=", ".join(G1_DEFAULTS["backfill"]),
             key="g1_backfill",
-            help="IEI_X (a 3 to 7-year Treasury ladder, from January 1980) "
+            help="IEI_X (a 3 to 7-year Treasury ladder, from January 1969) "
                  "carries IEI before its January 2007 launch. VFITX (Vanguard "
                  "Intermediate-Term Treasury, from October 1991) did until "
                  "November 18, 2026; type it to reproduce the November 7 test. "
@@ -7288,22 +7373,31 @@ st.sidebar.header("Backtest Period")
 
 # The start box is blank at startup since November 18, 2026 (Tyler's decision
 # that day; it was pre-filled with 1995-06 before). Blank means the earliest
-# month the lookback and volatility window chosen above allow
-# (earliest_backtest_start), shown under the box. A month typed in is used as
-# it is, so 1995-06 runs as it always did.
+# cleared month for the lookback and volatility window chosen above
+# (earliest_backtest_start, never before FIRST_HOLD_FLOOR), shown under the
+# box. A month typed in is used as it is, so 1995-06 runs as it always did; a
+# month before FIRST_HOLD_FLOOR is labelled a sensitivity run (November 25,
+# 2026).
 earliest_start = earliest_backtest_start(main_lookbacks, vol_months)
 backtest_start_typed = st.sidebar.text_input(
     "Backtest start (YYYY-MM)",
     value="",
     help=(
-        "Leave blank to start at the earliest month the data allows for the lookback and volatility "
-        "window chosen above. Enter YYYY-MM to start later; results are filtered to start from that month."
+        "Leave blank to start at the earliest cleared month for the lookback and volatility window chosen "
+        "above (February 1973 at the standing settings). Enter YYYY-MM to start later; results are filtered "
+        "to start from that month. A month before February 1973 runs as a sensitivity run."
     ),
     placeholder="e.g. 1995-06",
 )
 backtest_start = backtest_start_typed.strip() or earliest_start
+_sensitivity_note = ("Before February 1973 is a sensitivity run: TLT's stand-in is cleared from February 1973, "
+                     "QQQ's rows before February 8, 1971 are a fit, and gold was unusually calm in 1970 and "
+                     "1971, while governments still held its official price fixed.")
+_sensitivity_run = bool(backtest_start_typed.strip()) and backtest_start < FIRST_HOLD_FLOOR
 if not backtest_start_typed.strip():
-    st.sidebar.caption(f"Blank starts at {earliest_start}, the earliest month these settings allow.")
+    st.sidebar.caption(f"Blank starts at {earliest_start}, the earliest cleared month for these settings.")
+elif _sensitivity_run:
+    st.sidebar.caption(_sensitivity_note)
 
 backtest_end = st.sidebar.text_input(
     "Backtest end (YYYY-MM)",
@@ -7316,6 +7410,14 @@ try:
     start_year = int(backtest_start.split("-")[0])
     download_year = start_year - 2
     download_start = f"{download_year}-01-01"
+    # Never ask Yahoo for exactly 1970-01-01 (a start typed in 1972 would). Its
+    # client turns that date into timestamp 0 for a ticker on UTC time (BTC-USD),
+    # reads 0 as no start and returns one month, so IBIT silently lost its
+    # Bitcoin history and the short series was cached. 1970-01-01 was a market
+    # holiday, so asking from the next day loses nothing. Found by the fresh
+    # download test of November 25, 2026.
+    if download_start == "1970-01-01":
+        download_start = "1970-01-02"
 except (ValueError, IndexError):
     download_start = "2011-01-01"
 
@@ -7572,15 +7674,16 @@ BACKFILL_DEFAULTS = [
     # 1990. Sources, checks and limits: "Data Adjustments.md". QQQ's segment
     # is the exception since November 25, 2026: it is QQQ's whole chain, from
     # 1970-01-02 in the file to the fund's first day. HGER's older segment is
-    # HGER_FUT since the same day (below).
+    # HGER_FUT since the same day (below). Since November 25, 2026 most of these
+    # files reach back to about 1969 or 1970, and the default start is February
+    # 1973 (FIRST_HOLD_FLOOR).
     # HGER's index history carries its 0.68% fee (BACKFILL_FEE_ANNUAL) since
     # November 3, 2026. HGER_FUT before 1991, since November 25, 2026: a daily
     # index built from individual futures contracts in 16 markets on fixed
     # sector weights, with T-bill interest added and HGER's 0.68% a year
     # taken out inside the file, from "HGER FUT Daily Prices.csv" (1969-01-02
-    # to 1991-01-02). It holds no energy before November 1979. Its rows before
-    # 1980 wait for the other funds' longer histories; a run uses them only on
-    # days the engine's calendar has. Built in History Extension
+    # to 1991-01-02). It holds no energy before November 1979. A run uses its
+    # rows only on days the engine's calendar has. Built in History Extension
     # 2026-11-18\HGER 1970 Extension 2026-11-25. HGER_TR, the stand-in it
     # replaced (T-bills + 0.66 x the S&P GSCI Total Return's excess over
     # T-bills, less 0.68%, scaled to QCI_SYNTH's daily volatility), stays
@@ -7598,7 +7701,7 @@ BACKFILL_DEFAULTS = [
     # every day before launch, in place of BTAL_SYNTH and BTAL_X: T-bills +
     # 0.873 x the Jensen-Kelly-Pedersen daily US low-beta factor (Frazzini-
     # Pedersen beta, capped value weights), less 1.4% a year for fund costs,
-    # from "BTAL JKP Daily Prices.csv" (1980-01-02 to its splice date,
+    # from "BTAL JKP Daily Prices.csv" (1968-12-31 to its splice date,
     # 2011-09-12). Out of sample it tracks real BTAL at 0.92 monthly (BTAL_SYNTH
     # 0.78), and BTAL's own index back-test (2001-2011) at 0.97 (0.87). The
     # 1.4% is in the file, so no fee is charged. JKP's data is CC BY-NC 4.0:
@@ -7611,13 +7714,15 @@ BACKFILL_DEFAULTS = [
     # TBILL_SYNTH: 13-week T-bill total return less BIL's fee, from
     # "TBILL SYNTH Daily Prices.csv". Replaced VFISX, a 1-3 year Treasury
     # fund, November 3, 2026. BIL is also the risk-free rate. TBILL_X before
-    # 1990: the same build from 1980.
+    # 1990: the same build from 1969.
     ("BIL",     "TBILL_SYNTH, TBILL_X"),
     # TLT_SYNTH: 20-30 year par Treasuries priced off the Federal Reserve's
     # zero-coupon curve, from "TLT SYNTH Daily Prices.csv". Replaced VUSTX
     # (10+ year bonds, about 15% less duration) November 3, 2026. TLT_X before
     # January 31, 1990: a long Treasury priced off Yahoo's 30-year yield
-    # (the Federal Reserve curve has no 30-year point before November 1985).
+    # (the Federal Reserve curve has no 30-year point before November 1985),
+    # and before February 16, 1977 mainly off the 20-year yield (TLT 1970
+    # Extension 2026-11-25, in History Extension 2026-11-18).
     ("TLT",     "TLT_SYNTH, TLT_X"),
     # GLDM: GLD's history before GLDM's June 26, 2018 launch, then GOLD (the
     # daily gold price; dates corrected November 7, 2026) before GLD's
@@ -7651,8 +7756,9 @@ BACKFILL_DEFAULTS = [
     # launch, from "EMXC SYNTH Daily Prices.csv" (Build Synthetic EMXC.py).
     # Replaced the EEM-only backfill October 3, 2026, because EEM holds China.
     # EMXC_X before May 4, 1994: Templeton Developing Markets (TEDMX), from
-    # October 16, 1991. Nothing earlier, so EMXC joins late from a 1981 start
-    # (JOIN_WHEN_AVAILABLE_EQUITY); before 1993 DEVXJ_X takes its place among
+    # October 16, 1991. Nothing earlier, so EMXC joins late from any start
+    # before mid-1992 (JOIN_WHEN_AVAILABLE_EQUITY); before 1993 DEVXJ_X takes
+    # its place among
     # the equity candidates (EQUITY_SEAT_BEFORE).
     ("EMXC",    "EMXC_SYNTH, EEM, VEIEX, EMXC_X"),
     # DXJ_HEDGED: DXJ's own unhedged returns before its April 1, 2010 change
@@ -7740,7 +7846,7 @@ with st.sidebar.expander("Backfill Rules", expanded=False):
 
 # Always back-fill the balanced benchmarks from the proxies declared in
 # BAL_BENCHMARKS, regardless of the sidebar backfill rows above. This keeps
-# AOR/AOA history extended back to 1980 (via VSMGX/VASGX, then AOR_X/AOA_X) on every
+# AOR/AOA history extended back to 1969 (via VSMGX/VASGX, then AOR_X/AOA_X) on every
 # run so the benchmark lines match the strategy and SPY across the full window.
 for _bcfg in BAL_BENCHMARKS:
     _bf_chain = _bcfg.get("backfill")
@@ -8996,6 +9102,8 @@ if run_button:
                                 ("Trade day", exec_timing_label),
                                 ("Trading cost", f"{cost_per_side:.2%} per side" if cost_per_side > 0 else "None (gross)"),
                                 ("Period", f"{_p0:%Y-%m} to {_p1:%Y-%m}")]
+                        if _sensitivity_run:
+                            _set.append(("Sensitivity run", _sensitivity_note))
                         if leverage_params_ui.get("enabled", False):
                             lp = leverage_params_ui
                             if lp.get("method") == "constant":
