@@ -56,3 +56,14 @@ DBC vs HGER Basket Test*
 
 # Reality Check: saved neighbor backtests (rebuilt on demand)
 reality_check_cache/
+
+# DXJ 1970 extension: Nikkei Inc. daily closes (free for research, not for redistribution) and engine copies used in checks
+History Extension 2026-11-18/DXJ 1970 Extension 2026-11-25/data/
+History Extension 2026-11-18/DXJ 1970 Extension 2026-11-25/G Independent Rebuild/G Build Detail.csv
+History Extension 2026-11-18/DXJ 1970 Extension 2026-11-25/Engine Effect Check/Engine */
+History Extension 2026-11-18/DXJ 1970 Extension 2026-11-25/Engine Effect Check/Price Snapshot*/
+History Extension 2026-11-18/DXJ 1970 Extension 2026-11-25/Dated Change 2026-11-25/Dated Change Daily Detail.csv
+History Extension 2026-11-18/DXJ 1970 Extension 2026-11-25/Engine Step Rehearsal 2026-11-25/Copy */
+History Extension 2026-11-18/DXJ 1970 Extension 2026-11-25/Engine Step Rehearsal 2026-11-25/Pinned Cache*/
+History Extension 2026-11-18/DXJ 1970 Extension 2026-11-25/Dated Change Engine Rehearsal 2026-11-25/Copy */
+History Extension 2026-11-18/DXJ 1970 Extension 2026-11-25/Dated Change Engine Rehearsal 2026-11-25/Pinned Cache*/
