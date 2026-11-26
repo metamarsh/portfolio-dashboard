@@ -4099,15 +4099,33 @@ def ae_gap_pill(s_val, b_val, kind, higher_better=True, digits=2):
 
 # ---- Plotly ----
 
+def ae_is_mobile():
+    """True when the page is being read on a phone, judged by the browser's User-Agent header (November 26,
+    2026). Python never learns the screen's width, and a Plotly chart cannot rearrange itself by width, so
+    the charts that do not fit a phone are drawn differently for one: no toolbar over the chart (it sat on
+    the period buttons), the growth chart's periods as one menu and its legend in two columns, and the
+    Drawdowns in Context chart with a narrower label column. A tablet or a narrow desktop window gets the
+    desktop charts. Build and checks:
+    C:\\Users\\tyler\\OneDrive\\PROJECTS\\Strategy Backtesting System\\Backtest Engine\\Mobile Fixes 2026-11-26\\"""
+    try:
+        ua = str(st.context.headers.get("User-Agent", "") or "")
+    except Exception:
+        return False
+    return bool(re.search(r"Mobi|iPhone|iPod|Windows Phone", ua))
+
+
 def ae_chart_config(name):
-    """Plotly toolbar settings: PNG downloads at 3x, named for the chart and the time."""
+    """Plotly toolbar settings: PNG downloads at 3x, named for the chart and the time. No toolbar on a phone."""
     now = ae_local_now()
     stamp = f"{now:%Y-%m-%d} {now.hour % 12 or 12}.{now:%M} {'a.m.' if now.hour < 12 else 'p.m.'}"
-    return {
+    cfg = {
         "displaylogo": False,
         "toImageButtonOptions": {"format": "png", "filename": f"{name} {stamp}", "scale": 3},
         "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d", "toggleSpikelines"],
     }
+    if ae_is_mobile():
+        cfg["displayModeBar"] = False
+    return cfg
 
 
 def ae_plot(fig, name, key):
@@ -4136,10 +4154,11 @@ def ae_layout(fig, height=340, yfmt=None, ytitle=None, log=False, xhover="%b %Y"
     return fig
 
 
-def ae_buttons(labels, args_list, y=1.02):
-    """Plotly's own buttons (no Streamlit rerun), styled like the site's pills."""
+def ae_buttons(labels, args_list, y=1.02, menu=False):
+    """Plotly's own buttons (no Streamlit rerun), styled like the site's pills. menu=True draws them as one
+    drop-down menu instead, for a row too long for a phone."""
     return [dict(
-        type="buttons", direction="right", active=0, showactive=True,
+        type="dropdown" if menu else "buttons", direction="down" if menu else "right", active=0, showactive=True,
         x=0, xanchor="left", y=y, yanchor="bottom", pad=dict(r=6, t=0, b=4, l=0),
         bgcolor="#ffffff", bordercolor=AE_CONTROL, borderwidth=1,
         font=dict(family=AE_SANS, size=12.5, color=AE_BODY),
@@ -4232,7 +4251,8 @@ def ae_series_set(strat_returns, bench_returns, balanced_data, lev_tag=""):
 
 def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
     """Growth of $10,000 on a log scale, with Plotly buttons for the last 20, 10 and 5 years and for each
-    decade of the run (November 26, 2026). A decade button shows that decade alone, January of its first year
+    decade of the run (November 26, 2026). The decades are a second row of buttons under the first; on a
+    phone all the periods are one drop-down menu, and the legend is two columns with rounded ending values. A decade button shows that decade alone, January of its first year
     to December of its last ("1970s": the end of 1969 to the end of 1979), with every line starting again at
     $10,000. The current decade runs to the run's latest month, so it moves forward with the data. A decade
     the run only partly covers starts at the run's first month; one with under 12 months is left out, unless
@@ -4254,6 +4274,14 @@ def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
     vis_all = []
     lo_all, hi_all = np.inf, 0.0
     leg_chars = 0
+    mob = ae_is_mobile()
+
+    def _end_value(x):
+        """The legend's ending value: to the dollar, or rounded to three figures on a phone, where the
+        legend has half the chart's width per line (the hover keeps the full figure)."""
+        if not mob or x < 1e4:
+            return f"${x:,.0f}"
+        return f"${x / 1e6:.2f}M" if x >= 1e6 else (f"${x / 1e3:.0f}K" if x >= 1e5 else f"${x / 1e3:.1f}K")
     for p_i, (_p_label, cut, end) in enumerate(periods):
         for rank, (name, r, color, width, dash) in reversed(list(enumerate(sets))):
             r = r.reindex(idx).dropna()
@@ -4275,7 +4303,7 @@ def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
             v = INITIAL_CAPITAL * w
             n_years = max((len(w) - 1) / 12.0, 1e-9)
             cagr = (v.iloc[-1] / INITIAL_CAPITAL) ** (1 / n_years) - 1
-            sub = f"${v.iloc[-1]:,.0f} · {ae_neg(f'{cagr:.1%}')}"
+            sub = f"{_end_value(v.iloc[-1])} · {ae_neg(f'{cagr:.1%}')}"
             grp = f"{name}|{p_i}"
             # Legend drops the ticker ("80/20 (AOA)" -> "80/20"); hover and the
             # Performance Summary header keep it.
@@ -4302,7 +4330,7 @@ def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
             vis_all.append(p_i)
     args = [[{"visible": [v == p_i for v in vis_all]}, {"xaxis.autorange": True, "yaxis.autorange": True}]
             for p_i in range(len(periods))]
-    ae_layout(fig, height=440, log=True, top=46)
+    ae_layout(fig, height=470 if mob else 440, log=True, top=46)
     ticks = []
     e = int(np.floor(np.log10(max(lo_all, 1.0))))
     while 10 ** e <= hi_all * 1.0001:
@@ -4316,10 +4344,29 @@ def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
 
     fig.update_yaxes(tickvals=ticks, ticktext=[_usd(t) for t in ticks])
     if len(periods) > 1:
-        fig.update_layout(updatemenus=ae_buttons([p[0] for p in periods], args))
-    # Equal-width legend items, sized to the longest label, so spacing is even.
+        dec = [i for i, p in enumerate(periods) if p[2] is not None]
+        if mob or not dec:
+            fig.update_layout(updatemenus=ae_buttons([p[0] for p in periods], args, menu=mob))
+        else:
+            # Two rows, so the buttons fit a chart of ordinary width and stay clear of the toolbar: Since and
+            # the 20, 10 and 5 years above, the decades below. They are two Plotly menus, so each button also
+            # clears the other row's highlight, and only the period on show is marked.
+            main = [i for i in range(len(periods)) if i not in dec]
+            for i in main:
+                args[i][1]["updatemenus[1].active"] = -1
+            for i in dec:
+                args[i][1]["updatemenus[0].active"] = -1
+            row1 = ae_buttons([periods[i][0] for i in main], [args[i] for i in main])[0]
+            row2 = ae_buttons([periods[i][0] for i in dec], [args[i] for i in dec])[0]
+            row1["pad"] = dict(row1["pad"], b=40)
+            row2["active"] = -1
+            fig.update_layout(updatemenus=[row1, row2], margin=dict(t=84), height=478)
+    # Equal-width legend items, sized to the longest label, so spacing is even. On a phone: two columns.
     fig.update_layout(legend=dict(y=-0.1, valign="top", itemsizing="constant", groupclick="togglegroup",
                                   entrywidth=max(120, 7 * leg_chars + 16), entrywidthmode="pixels"))
+    if mob:
+        fig.update_layout(legend=dict(y=-0.12, x=0, xanchor="left", entrywidth=0.48, entrywidthmode="fraction",
+                                      font=dict(size=12.5)))
     return fig
 
 
@@ -4510,7 +4557,7 @@ def ddc_row_label(primary, secondary, live=False):
     color = BRAND_PURPLE if live else AE_INK
     p = f"<b>{ae_esc(primary)}</b>" if live else ae_esc(primary)
     return (f"<span style='color:{color}'>{p}</span><br>"
-            f"<span style='font-size:12px;color:{AE_AXIS}'>{ae_esc(secondary)}</span>")
+            f"<span style='font-size:{11 if ae_is_mobile() else 12}px;color:{AE_AXIS}'>{ae_esc(secondary)}</span>")
 
 
 def ddc_band(sizing, leverage_on):
@@ -4657,6 +4704,12 @@ def ae_fig_drawdown_context(daily_equity, balanced_data, spy_daily_equity, cal, 
 
     n1, n2 = len(top), max(len(bottom), 1)
     M_T, GAP, M_B, M_R = 58, 76, 96, 28
+    # On a phone: a narrower label column in smaller type, more room right of the bars for their figures,
+    # each title on two lines, and no note beside the band (the heading's sub-line says the same).
+    mob = ae_is_mobile()
+    left = 206 if mob else DDC_LEFT
+    if mob:
+        M_T, GAP, M_R = 76, 94, 52
     plot_h = (n1 + n2) * DDC_ROW + GAP
     height = M_T + plot_h + M_B
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[n1, n2], vertical_spacing=GAP / plot_h)
@@ -4666,11 +4719,12 @@ def ae_fig_drawdown_context(daily_equity, balanced_data, spy_daily_equity, cal, 
             x=[r["mag"] for r in rows], y=ys, orientation="h", width=0.58,
             marker=dict(color=[r["color"] for r in rows], cornerradius=6),
             text=[r["text"] for r in rows], textposition="outside", cliponaxis=False,
-            textfont=dict(size=14, color=[BRAND_PURPLE if r.get("now") else AE_INK for r in rows]),
+            textfont=dict(size=13 if mob else 14, color=[BRAND_PURPLE if r.get("now") else AE_INK for r in rows]),
             hovertext=[r["hover"] for r in rows], hovertemplate="%{hovertext}<extra></extra>", showlegend=False,
         ), row=row, col=1)
         fig.update_yaxes(tickmode="array", tickvals=ys, ticktext=[r["label"] for r in rows], autorange="reversed",
-                         showgrid=False, ticks="", ticklabelstandoff=12, tickfont=dict(size=15, color=AE_INK),
+                         showgrid=False, ticks="", ticklabelstandoff=8 if mob else 12,
+                         tickfont=dict(size=13 if mob else 15, color=AE_INK),
                          fixedrange=True, row=row, col=1)
 
     deepest = max([r["mag"] for r in top + bottom] + ([band["hi"]] if band else []))
@@ -4692,17 +4746,21 @@ def ae_fig_drawdown_context(daily_equity, balanced_data, spy_daily_equity, cal, 
         for xv in (lo, hi):
             fig.add_shape(type="line", xref="x", yref="y domain", x0=xv, x1=xv, y0=0, y1=1,
                           line=dict(color=DDC_BAND_EDGE, width=1, dash="3px,3px"), layer="below")
-        fig.add_annotation(x=hi, y="r1_0", xref="x", yref="y", xanchor="left", xshift=10, yanchor="middle",
-                           align="left", showarrow=False, text=band["text"],
-                           font=dict(size=12, color=AE_BODY, family=AE_SANS))
+        if not mob:
+            fig.add_annotation(x=hi, y="r1_0", xref="x", yref="y", xanchor="left", xshift=10, yanchor="middle",
+                               align="left", showarrow=False, text=band["text"],
+                               font=dict(size=12, color=AE_BODY, family=AE_SANS))
 
     title_top = (f"Every drawdown of 10% or more, {start:%b %Y} to {end:%b %Y}"
                  + (", and the live account now" if live is not None else ""))
     title_bottom = "Worst drawdown over the same period: the strategy and the market"
     for y, text in ((fig.layout.yaxis.domain[1], title_top), (fig.layout.yaxis2.domain[1], title_bottom)):
-        fig.add_annotation(x=0, y=y, xref="paper", yref="paper", xanchor="left", yanchor="bottom", xshift=-(DDC_LEFT - 4),
-                           yshift=14, showarrow=False, text=f"<b>{ae_esc(text)}</b>",
-                           font=dict(size=15, color=AE_INK, family=AE_SANS))
+        html_text = ae_esc(text)
+        if mob:
+            html_text = html_text.replace(", ", ",<br>", 1).replace(": ", ":<br>", 1)
+        fig.add_annotation(x=0, y=y, xref="paper", yref="paper", xanchor="left", yanchor="bottom", xshift=-(left - 4),
+                           yshift=14, showarrow=False, align="left", text=f"<b>{html_text}</b>",
+                           font=dict(size=14 if mob else 15, color=AE_INK, family=AE_SANS))
     keys = [("This backtest", DDC_BACKTEST)] + ([("Live account", BRAND_PURPLE)] if live is not None else [])
     for name, color in keys:
         fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name=name + " ",
@@ -4711,7 +4769,7 @@ def ae_fig_drawdown_context(daily_equity, balanced_data, spy_daily_equity, cal, 
     fig.update_layout(
         height=height, paper_bgcolor="#ffffff", plot_bgcolor="#ffffff",
         font=dict(family=AE_SANS, size=13, color=AE_AXIS),
-        margin=dict(t=M_T, b=M_B, l=DDC_LEFT, r=M_R), hovermode="closest",
+        margin=dict(t=M_T, b=M_B, l=left, r=M_R), hovermode="closest",
         legend=dict(orientation="h", xref="container", yref="container", x=0.5, xanchor="center",
                     y=14 / height, yanchor="bottom", font=dict(size=13, color=AE_BODY),
                     itemsizing="constant", itemclick=False, itemdoubleclick=False),
@@ -6071,7 +6129,7 @@ RC_CSS = "".join([
     ".rc-h3{font-family:'IBM Plex Serif',Georgia,serif;font-size:21px;font-weight:600;color:#1C1B19}",
     ".rc-h4{font-family:'IBM Plex Serif',Georgia,serif;font-size:17px;font-weight:600;color:#1C1B19}",
     ".rc-sec{display:flex;flex-direction:column;gap:12px}",
-    ".rc-table{width:100%;border-collapse:collapse;font-size:14px;color:#1C1B19}",
+    ".rc-table{width:100%;border-collapse:collapse;font-size:14px;color:#1C1B19}", "@media (max-width:640px){.rc-sec:has(> .rc-table){overflow-x:auto}.rc-table{white-space:nowrap}}",
     ".rc-table thead th{text-align:right;padding:11px 14px;border-bottom:1px solid #D9D5CC;background-color:#F5F4F0;color:#55524D;font-weight:600;font-size:13px}",
     ".rc-table thead th:first-child,.rc-table thead th:last-child{text-align:left}",
     ".rc-table tbody td{padding:9px 14px;border-bottom:1px solid #E6E3DC;text-align:right;font-variant-numeric:tabular-nums}",
