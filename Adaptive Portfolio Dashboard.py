@@ -189,16 +189,24 @@ st.markdown("""
     .ae-desc { max-width: 760px; font-size: 16px; line-height: 1.6; color: #55524D; }
     /* On this page: a segmented control with no label, in a muted indigo (mockups P1 and M1 of
        November 20, 2026). The first link is solid until a link is followed; then the one followed
-       is (ae_head writes those rules, one per link). */
-    .ae-otp { display: flex; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+       was (rules ae_head wrote, one per link). Since November 26, 2026 the row is an element of its
+       own, held under the tab bar while its tab scrolls, and the solid link is the section in view:
+       AE_SPY_JS adds the class ae-on and sets the row's top. The first link is solid until that
+       script has run. */
+    .ae-otp { display: flex; flex-wrap: wrap; align-items: center; margin-top: 0; }
+    [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .ae-otp) {
+        position: sticky; top: 6.8rem; z-index: 55; background: #ffffff; padding: 8px 0 8px 0; margin: -4px 0 -4px 0;
+    }
+    [data-testid="stElementContainer"]:has(.ae-spy-js) { display: none; }
     .ae-otp .ae-otp-seg { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 4px; background: #EFEDF6; border: 1px solid #D6D1E8; border-radius: 10px; }
     .ae-otp a, .ae-otp a:visited { display: inline-flex; align-items: center; min-height: 35px; padding: 0 16px; border-radius: 7px; font-size: 13.5px; font-weight: 600; color: #3A3170 !important; text-decoration: none; }
     .ae-otp a:hover, .ae-otp a:focus-visible { background: #E0DCEE; }
-    .ae-otp .ae-otp-seg a:first-child { background: #4B3F8F; color: #ffffff !important; font-weight: 700; }
-    .ae-h3 { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 20px; margin: 1.4rem 0 0.5rem 0; scroll-margin-top: 8rem; }
+    .ae-otp .ae-otp-seg a.ae-on, .ae-otp .ae-otp-seg a.ae-on:hover,
+    .ae-otp .ae-otp-seg:not(:has(a.ae-on)) a:first-child { background: #4B3F8F; color: #ffffff !important; font-weight: 700; }
+    .ae-h3 { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 20px; margin: 1.4rem 0 0.5rem 0; scroll-margin-top: 11.5rem; }
     .ae-h3-t { font-family: 'IBM Plex Serif', Georgia, serif; font-size: 22px; line-height: 1.2; font-weight: 600; color: #1C1B19; }
     .ae-h3-s { font-size: 14px; line-height: 1.55; color: #55524D; max-width: 780px; margin-top: 4px; }
-    .ae-anchor { scroll-margin-top: 8rem; }
+    .ae-anchor { scroll-margin-top: 11.5rem; }
     .ae-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 600; white-space: nowrap; }
     .ae-tag { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; border: 1px solid #D9D5CC; background: #ffffff; color: #55524D; font-size: 13px; font-weight: 500; white-space: nowrap; }
     .ae-now { display: inline-flex; padding: 3px 10px; border-radius: 999px; background: #EFEDF6; color: #4B3F8F; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
@@ -263,7 +271,7 @@ st.markdown("""
     .ae-set-k { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #55524D; }
     .ae-set-v { font-size: 14px; line-height: 1.45; color: #1C1B19; overflow-wrap: anywhere; }
     .ae-set div.ae-wide { grid-column: 1 / -1; }
-    .ae-chart-h { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; scroll-margin-top: 8rem; }
+    .ae-chart-h { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; scroll-margin-top: 11.5rem; }
     .ae-chart-t { font-family: 'IBM Plex Serif', Georgia, serif; font-size: 18px; font-weight: 600; color: #1C1B19; }
 </style>
 """, unsafe_allow_html=True)
@@ -3920,8 +3928,89 @@ def ae_local_now():
         return datetime.now()
 
 
+# The On this page row (November 26, 2026). ae_head puts AE_SPLIT before the row and ae_md draws what
+# follows it as an element of its own, because a sticky element only travels inside its parent: as its own
+# element the row's parent is the whole tab, so CSS can hold it under the tab bar for the tab's length.
+# AE_SPY_JS, loaded once per page, does three things with Plotly-style plain DOM code and no rerun: it sets
+# each row's top to the tab bar's bottom edge, it marks with the class ae-on the link of the section the
+# reader has scrolled to (the last section whose heading has reached the row; the last link at the page's
+# end), and on a click it scrolls the section's heading to just under the row.
+# Build and checks: C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System\Backtest Engine\Sticky Section Bar 2026-11-26\
+AE_SPLIT = "<!--ae-otp-->"
+AE_SPY_JS = """<span class="ae-spy-js"></span><script>
+(function () {
+  if (window.__aeSpy) { return; }
+  window.__aeSpy = 1;
+  function geom(bar) {
+    var holder = bar.closest('[data-testid="stElementContainer"]') || bar;
+    var tabs = bar.closest('[data-testid="stTabs"]');
+    var tl = tabs ? tabs.querySelector('[role="tablist"]') : null;
+    var top = tl ? (parseFloat(getComputedStyle(tl).top) || 0) + tl.offsetHeight - 1 : 0;
+    return { holder: holder, top: top, bottom: top + holder.offsetHeight };
+  }
+  function scroller(el) {
+    for (var n = el.parentElement; n; n = n.parentElement) {
+      var oy = getComputedStyle(n).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 1) { return n; }
+    }
+    return document.scrollingElement || document.documentElement;
+  }
+  function tick() {
+    var bars = document.querySelectorAll('.ae-otp');
+    for (var i = 0; i < bars.length; i++) {
+      var bar = bars[i];
+      if (!bar.offsetParent) { continue; }
+      var g = geom(bar);
+      if (g.top > 0) { g.holder.style.top = g.top + 'px'; }
+      var line = g.bottom + 28;
+      var links = bar.querySelectorAll('a[href^="#"]');
+      var on = null, last = null;
+      for (var k = 0; k < links.length; k++) {
+        var t = document.getElementById(links[k].getAttribute('href').slice(1));
+        if (!t || !t.offsetParent) { continue; }
+        if (!on) { on = links[k]; }
+        last = links[k];
+        if (t.getBoundingClientRect().top <= line) { on = links[k]; }
+      }
+      var sc = scroller(bar);
+      if (last && sc.scrollTop > 0 && sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4) { on = last; }
+      if (!on) { on = links[0]; }
+      for (var m = 0; m < links.length; m++) { links[m].classList.toggle('ae-on', links[m] === on); }
+    }
+  }
+  var queued = false;
+  function soon() {
+    if (queued) { return; }
+    queued = true;
+    requestAnimationFrame(function () { queued = false; tick(); });
+  }
+  document.addEventListener('scroll', soon, true);
+  window.addEventListener('resize', soon);
+  document.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('.ae-otp a[href^="#"]') : null;
+    if (!a) { return; }
+    var t = document.getElementById(a.getAttribute('href').slice(1));
+    if (!t) { return; }
+    e.preventDefault();
+    t.style.scrollMarginTop = (geom(a.closest('.ae-otp')).bottom + 10) + 'px';
+    t.scrollIntoView({ behavior: 'auto', block: 'start' });
+  }, true);
+  setInterval(tick, 400);
+  tick();
+})();
+</script>"""
+
+
 def ae_md(html_text):
-    """Draw one HTML block. Lines are joined, so Markdown never reads a blank line or an indent."""
+    """Draw one HTML block. Lines are joined, so Markdown never reads a blank line or an indent. A block
+    holding AE_SPLIT (a tab's opening with its On this page row) is drawn as two elements, the row second,
+    followed by the row's script."""
+    if AE_SPLIT in html_text:
+        head, row = html_text.split(AE_SPLIT, 1)
+        st.markdown(head, unsafe_allow_html=True)
+        st.markdown(row, unsafe_allow_html=True)
+        st.html(AE_SPY_JS, unsafe_allow_javascript=True)
+        return
     st.markdown(html_text, unsafe_allow_html=True)
 
 
@@ -3956,19 +4045,12 @@ def ae_head(eyebrow, title, desc_html="", links=None):
     parts.append(f'<div class="ae-title">{ae_esc(title)}</div>')
     if desc_html:
         parts.append(f'<div class="ae-desc">{desc_html}</div>')
-    if links:
-        # No label. The link last followed is drawn solid (CSS :target, one rule per link, written
-        # here because the links differ by tab); until one is followed, the first link is.
-        ok = [a for a, _ in links if a[:1].isalpha() and a.replace("-", "").replace("_", "").isalnum()]
-        rules = "".join(f'body:has(#{a}:target) .ae-otp .ae-otp-seg a[href="#{a}"]'
-                        '{background:#4B3F8F;color:#ffffff !important;font-weight:700}' for a in ok)
-        rules += "".join(f'body:has(#{a}:target) .ae-otp .ae-otp-seg:has(a[href="#{a}"]) a:first-child'
-                         '{background:transparent;color:#3A3170 !important;font-weight:600}'
-                         for a in ok if a != links[0][0])
-        parts.append((f"<style>{rules}</style>" if rules else "")
-                     + '<div class="ae-otp"><span class="ae-otp-seg">'
-                     + "".join(f'<a href="#{a}">{ae_esc(t)}</a>' for a, t in links) + "</span></div>")
     parts.append("</div>")
+    if links:
+        # No label. The row follows AE_SPLIT, so ae_md draws it as an element of its own, which CSS holds
+        # under the tab bar while the tab scrolls; AE_SPY_JS marks the link of the section in view.
+        parts.append(AE_SPLIT + '<div class="ae-otp"><span class="ae-otp-seg">'
+                     + "".join(f'<a href="#{a}">{ae_esc(t)}</a>' for a, t in links) + "</span></div>")
     return "".join(parts)
 
 
@@ -4135,26 +4217,41 @@ def ae_series_set(strat_returns, bench_returns, balanced_data, lev_tag=""):
 
 
 def ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag=""):
-    """Growth of $10,000 on a log scale, with Plotly buttons for the last 20, 10 and 5 years."""
+    """Growth of $10,000 on a log scale, with Plotly buttons for the last 20, 10 and 5 years and for each
+    decade of the run (November 26, 2026). A decade button shows that decade alone, January of its first year
+    to December of its last ("1970s": the end of 1969 to the end of 1979), with every line starting again at
+    $10,000. The current decade runs to the run's latest month, so it moves forward with the data. A decade
+    the run only partly covers starts at the run's first month; one with under 12 months is left out, unless
+    it is the current decade. Each period is (label, cut, end): the months after cut and before end."""
     sets = ae_series_set(strat_returns, bench_returns, balanced_data, lev_tag)
     idx = strat_returns.index
-    periods = [("Since " + idx[0].strftime("%b %Y"), None)]
+    periods = [("Since " + idx[0].strftime("%b %Y"), None, None)]
     for yrs in (20, 10, 5):
         if len(idx) > yrs * 12 + 6:
-            periods.append((f"{yrs} years", yrs))
+            periods.append((f"{yrs} years", idx[-(yrs * 12) - 1], None))
+    last_dec = idx[-1].year // 10 * 10
+    for dec in range(idx[0].year // 10 * 10, last_dec + 1, 10):
+        d_lo, d_hi = pd.Timestamp(dec, 1, 1), pd.Timestamp(dec + 10, 1, 1)
+        n_in = int(((idx >= d_lo) & (idx < d_hi)).sum())
+        if n_in >= 12 or (dec == last_dec and n_in >= 1):
+            before = idx[idx < d_lo]
+            periods.append((f"{dec}s", before[-1] if len(before) else d_lo - pd.Timedelta(days=1), d_hi))
     fig = go.Figure()
     vis_all = []
     lo_all, hi_all = np.inf, 0.0
     leg_chars = 0
-    for p_i, (label, yrs) in enumerate(periods):
+    for p_i, (_p_label, cut, end) in enumerate(periods):
         for rank, (name, r, color, width, dash) in reversed(list(enumerate(sets))):
             r = r.reindex(idx).dropna()
-            if yrs is None:
+            if cut is None:
                 start = r.index[0] - pd.offsets.MonthEnd(1)
                 w = pd.concat([pd.Series([1.0], index=[start]), (1 + r).cumprod()])
             else:
-                cut = idx[-(yrs * 12) - 1]
                 rr = r[r.index > cut]
+                if end is not None:
+                    rr = rr[rr.index < end]
+                    if rr.empty:
+                        continue   # a line with no months in this decade (a short-history comparison ticker)
                 # A line that begins inside the period (an extra comparison ticker with a short
                 # history) starts at its own first month, not at the period's first day.
                 start = cut
@@ -8559,7 +8656,8 @@ if run_button:
 
                         ae_md(ae_h3(f"Growth of ${INITIAL_CAPITAL:,}",
                                     "Log scale, so equal heights are equal percentage gains. Hover for each month's values; "
-                                    "the buttons change the period and a legend click hides a line." + _cmp_sub,
+                                    "the buttons change the period and a legend click hides a line. A decade button "
+                                    "starts every line again at $10,000; the latest decade runs to the latest month." + _cmp_sub,
                                     anchor="ov-growth"))
                         ae_plot(ae_fig_growth(strat_returns, bench_returns, balanced_data, lev_tag), f"Growth of ${INITIAL_CAPITAL:,}",
                                 "ae_growth")
