@@ -192,14 +192,22 @@ st.markdown("""
        was (rules ae_head wrote, one per link). Since November 26, 2026 the row is an element of its
        own, held under the tab bar while its tab scrolls, and the solid link is the section in view:
        AE_SPY_JS adds the class ae-on and sets the row's top. The first link is solid until that
-       script has run. */
-    .ae-otp { display: flex; flex-wrap: wrap; align-items: center; margin-top: 0; }
+       script has run. Later that day (Tyler picked mockup A): the row is slimmer at every width (26px
+       links in 2px of padding, was 35px in 4px) and never wraps; where the links do not fit, on a
+       phone, the row swipes sideways with no scrollbar and the script slides the solid link into view. */
+    .ae-otp { display: flex; align-items: center; margin-top: 0; min-width: 0; }
     [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .ae-otp) {
-        position: sticky; top: 6.8rem; z-index: 55; background: #ffffff; padding: 8px 0 8px 0; margin: -4px 0 -4px 0;
+        position: sticky; top: 6.8rem; z-index: 55; background: #ffffff; padding: 6px 0 6px 0; margin: -4px 0 -10px 0;
     }
+    /* Streamlit pulls each Markdown block up 1rem at its foot, which left the row hanging out of its own
+       white band; without it the band covers the row and the 6px above and below it. */
+    [data-testid="stElementContainer"]:has(> [data-testid="stMarkdown"] .ae-otp) [data-testid="stMarkdownContainer"] { margin-bottom: 0 !important; }
     [data-testid="stElementContainer"]:has(.ae-spy-js) { display: none; }
-    .ae-otp .ae-otp-seg { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 4px; background: #EFEDF6; border: 1px solid #D6D1E8; border-radius: 10px; }
-    .ae-otp a, .ae-otp a:visited { display: inline-flex; align-items: center; min-height: 35px; padding: 0 16px; border-radius: 7px; font-size: 13.5px; font-weight: 600; color: #3A3170 !important; text-decoration: none; }
+    .ae-otp .ae-otp-seg { display: inline-flex; flex-wrap: nowrap; gap: 3px; padding: 2px; background: #EFEDF6; border: 1px solid #D6D1E8; border-radius: 8px;
+        max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .ae-otp .ae-otp-seg::-webkit-scrollbar { display: none; }
+    .ae-otp a, .ae-otp a:visited { display: inline-flex; flex: 0 0 auto; align-items: center; min-height: 26px; padding: 0 14px; border-radius: 6px; font-size: 13.5px; font-weight: 600; white-space: nowrap; color: #3A3170 !important; text-decoration: none; }
+    @media (max-width: 640px) { .ae-otp a, .ae-otp a:visited { padding: 0 11px; font-size: 12.5px; } }
     .ae-otp a:hover, .ae-otp a:focus-visible { background: #E0DCEE; }
     .ae-otp .ae-otp-seg a.ae-on, .ae-otp .ae-otp-seg a.ae-on:hover,
     .ae-otp .ae-otp-seg:not(:has(a.ae-on)) a:first-child { background: #4B3F8F; color: #ffffff !important; font-weight: 700; }
@@ -3934,7 +3942,7 @@ def ae_local_now():
 # AE_SPY_JS, loaded once per page, does three things with Plotly-style plain DOM code and no rerun: it sets
 # each row's top to the tab bar's bottom edge, it marks with the class ae-on the link of the section the
 # reader has scrolled to (the last section whose heading has reached the row; the last link at the page's
-# end), and on a click it scrolls the section's heading to just under the row.
+# end), sliding that link into view where the row swipes sideways, and on a click it scrolls the section's heading to just under the row.
 # Build and checks: C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System\Backtest Engine\Sticky Section Bar 2026-11-26\
 AE_SPLIT = "<!--ae-otp-->"
 AE_SPY_JS = """<span class="ae-spy-js"></span><script>
@@ -3975,7 +3983,13 @@ AE_SPY_JS = """<span class="ae-spy-js"></span><script>
       var sc = scroller(bar);
       if (last && sc.scrollTop > 0 && sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4) { on = last; }
       if (!on) { on = links[0]; }
+      var moved = on && !on.classList.contains('ae-on');
       for (var m = 0; m < links.length; m++) { links[m].classList.toggle('ae-on', links[m] === on); }
+      var seg = on ? on.parentElement : null;
+      if (moved && seg && seg.scrollWidth > seg.clientWidth + 1) {
+        var left = on.getBoundingClientRect().left - seg.getBoundingClientRect().left + seg.scrollLeft;
+        seg.scrollLeft = Math.max(0, left - (seg.clientWidth - on.offsetWidth) / 2);
+      }
     }
   }
   var queued = false;
@@ -3992,7 +4006,7 @@ AE_SPY_JS = """<span class="ae-spy-js"></span><script>
     var t = document.getElementById(a.getAttribute('href').slice(1));
     if (!t) { return; }
     e.preventDefault();
-    t.style.scrollMarginTop = (geom(a.closest('.ae-otp')).bottom + 10) + 'px';
+    t.style.scrollMarginTop = (geom(a.closest('.ae-otp')).bottom + 6) + 'px';
     t.scrollIntoView({ behavior: 'auto', block: 'start' });
   }, true);
   setInterval(tick, 400);
