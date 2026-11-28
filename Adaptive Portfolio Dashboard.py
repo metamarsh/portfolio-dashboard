@@ -793,6 +793,108 @@ SIZING_DEFAULT = "erc"            # the sidebar's starting choice
 SIZING_IF_UNSET = "inverse_vol"   # for callers that pass no params["sizing"]
 ERC_KEEP = ("BIL",)               # keep their inverse-volatility weight, outside the ERC split
 
+# Rebalance frequency (added November 28, 2026): how often the whole decision
+# (the ranking, the equity picks, the top N, the position weights, G1 and
+# leverage) is redone and traded. run_backtest reads params["rebal_freq"]:
+#   "1M"  every month, at the month's trade day. The default, and
+#         run_backtest's original loop, untouched: a caller that leaves
+#         rebal_freq out, or passes "1M", gets the results it always did.
+#   "2M", "3M", "6M", "1Y"  every 2, 3, 6 or 12 months, at the month's trade
+#         day. In the months between nothing is traded: the holdings are
+#         kept, their weights drift with their prices, and no cost is charged.
+#         The cycle follows the calendar. With params["rebal_phase"] 0 (the
+#         default) the months that trade are the ones whose number divides by
+#         the step (3M: the March, June, September and December trades; 1Y:
+#         December's); phase p moves them p months later. A run opens with a
+#         trade whatever the month.
+#   "1W", "2W"  the month's trade as it is, plus interim trades every 5 or 10
+#         trading days after it, skipping any with fewer than REBAL_MIN_LEFT
+#         trading days left before the next month's trade. An interim trade
+#         is a whole decision read at the close before it, with each lookback
+#         measured in calendar months back from that close. These are R5 and
+#         R10 of the Rebalance Frequency Test of November 17, 2026 (weekly and
+#         biweekly rotation, both Not supported there):
+#         C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System\Basket Research\ETF Scouting\Rebalance Frequency Test 2026-11-17\
+# Anything but "1M" runs through run_backtest_schedule (below run_backtest).
+# Build and checks:
+# C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System\Backtest Engine\Rebalance Frequency 2026-11-28\
+REBAL_FREQ_OPTIONS = {
+    "Every week (1W)": "1W",
+    "Every 2 weeks (2W)": "2W",
+    "Every month (1M)": "1M",
+    "Every 2 months (2M)": "2M",
+    "Every 3 months (3M)": "3M",
+    "Every 6 months (6M)": "6M",
+    "Every year (1Y)": "1Y",
+}
+REBAL_FREQ_LABELS = {v: k for k, v in REBAL_FREQ_OPTIONS.items()}
+REBAL_FREQ_DEFAULT = "1M"                       # the sidebar's starting choice, and a caller's when left out
+REBAL_INTERIM_STEP = {"1W": 5, "2W": 10}        # trading days between trades inside a month
+REBAL_MONTH_STEP = {"2M": 2, "3M": 3, "6M": 6, "1Y": 12}   # months between trades
+REBAL_MIN_LEFT = 3                              # an interim trade needs this many trading days before the next month's trade
+REBAL_TRADE_SCHEDULED = "Scheduled trade"       # the trade log's "trade" column
+REBAL_TRADE_INTERIM = "Interim trade"
+REBAL_TRADE_HELD = "Held (no trade)"
+_REBAL_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def rebal_freq_of(params):
+    """A run's rebalance frequency: params["rebal_freq"], or the monthly default when left out."""
+    freq = params.get("rebal_freq") or REBAL_FREQ_DEFAULT
+    if freq not in REBAL_FREQ_LABELS:
+        raise ValueError(f"unknown rebalance frequency {freq!r}")
+    return freq
+
+
+def rebal_phase_of(params):
+    """Where a 2, 3, 6 or 12 month cycle sits in the year: params["rebal_phase"], 0 when left out or not used."""
+    step = REBAL_MONTH_STEP.get(rebal_freq_of(params))
+    return int(params.get("rebal_phase") or 0) % step if step else 0
+
+
+def rebal_trade_months(freq, phase=0):
+    """The months (1 to 12) whose trade is made at a frequency: every month, or the cycle's."""
+    step = REBAL_MONTH_STEP.get(freq)
+    if not step:
+        return list(range(1, 13))
+    return [m for m in range(1, 13) if (m - int(phase)) % step == 0]
+
+
+def rebal_phase_label(freq, phase):
+    """A cycle's months by name: "Mar, Jun, Sep, Dec"."""
+    return ", ".join(_REBAL_MONTHS[m - 1] for m in rebal_trade_months(freq, phase))
+
+
+def rebal_text(params, cap=False):
+    """A run's rebalance frequency in words, for the settings, the results log and the comparison card:
+    "every month", "every 3 months (Mar, Jun, Sep, Dec)", "every week". cap=True starts it with a capital."""
+    freq = rebal_freq_of(params)
+    words = REBAL_FREQ_LABELS[freq].split(" (")[0]
+    if not cap:
+        words = words.lower()
+    if freq in REBAL_MONTH_STEP:
+        return f"{words} ({rebal_phase_label(freq, rebal_phase_of(params))})"
+    return words
+
+
+def rebal_note(params):
+    """A run's rebalance frequency in a few sentences, for the run notes ("" at the monthly default)."""
+    freq = rebal_freq_of(params)
+    if freq == REBAL_FREQ_DEFAULT:
+        return ""
+    words = REBAL_FREQ_LABELS[freq].split(" (")[0]
+    if freq in REBAL_MONTH_STEP:
+        return (f"{words}. The whole decision is redone and traded only at the "
+                f"{rebal_phase_label(freq, rebal_phase_of(params))} trades. In the other months the holdings are kept, "
+                f"their weights drift with their prices, and nothing is traded or charged. A run opens with a trade "
+                f"whatever the month.")
+    step = REBAL_INTERIM_STEP[freq]
+    return (f"{words}. Besides the month's trade, the whole decision is redone and traded every {step} trading days "
+            f"after it, skipping any trade with fewer than {REBAL_MIN_LEFT} trading days left before the next "
+            f"month's trade. An interim trade reads the close before it and measures each lookback in calendar "
+            f"months back from that close.")
+
+
 # G1 cash rule (added November 7, 2026, off by default). In a cash month (BIL
 # among the final holdings), move part of BIL's weight to an intermediate
 # Treasury fund while Treasury yields are falling and the fund's main score is
@@ -1738,6 +1840,10 @@ def describe_sizing(params, trade_df=None):
                 by_reason.setdefault(s[len(prefix):-1], []).append(hm)
         n_fb = sum(len(v) for v in by_reason.values())
         text = f"{n_fb} of {len(trade_df)} months"
+        if "trade" in trade_df.columns:
+            # A rebalance frequency other than monthly: the log has a row for each
+            # stretch between trades, and only the ones that traded were sized.
+            text = f"{n_fb} of {int((trade_df['trade'] != REBAL_TRADE_HELD).sum())} trades"
         if n_fb:
             text += " (" + "; ".join(
                 f"{why}: " + (", ".join(ms) if len(ms) <= 6 else f"{len(ms)} months from {ms[0]} to {ms[-1]}")
@@ -2371,7 +2477,14 @@ def run_backtest(daily_prices, monthly_prices, params):
     option, so older callers' results do not move. The trade log's "sizing"
     column says how each month was weighted, including the months ERC fell
     back to inverse volatility.
+
+    Rebalance frequency (params["rebal_freq"]; added November 28, 2026):
+    left out or "1M", the run is the monthly loop below, as it always was.
+    Any other choice in REBAL_FREQ_OPTIONS is handed, whole, to
+    run_backtest_schedule (below this function).
     """
+    if rebal_freq_of(params) != REBAL_FREQ_DEFAULT:
+        return run_backtest_schedule(daily_prices, monthly_prices, params)
     fixed_tickers = params["fixed_tickers"]
     equity_tickers = params["equity_tickers"]
     equity_top_n = params["equity_top_n"]
@@ -2739,6 +2852,464 @@ def run_backtest(daily_prices, monthly_prices, params):
             trade_df = trade_df[trade_df["hold_month"] <= backtest_end].reset_index(drop=True)
 
     # Build daily equity curve for daily drawdown calculation
+    if daily_portfolio_values:
+        daily_equity = pd.Series(daily_portfolio_values).sort_index()
+        if backtest_start:
+            daily_equity = daily_equity[daily_equity.index >= backtest_start]
+        if backtest_end:
+            daily_equity = daily_equity[daily_equity.index <= backtest_end]
+    else:
+        daily_equity = pd.Series(dtype=float)
+
+    return results_df, trade_df, daily_equity
+
+
+def run_backtest_schedule(daily_prices, monthly_prices, params):
+    """
+    run_backtest on a rebalance frequency other than once a month
+    (params["rebal_freq"]; added November 28, 2026; see REBAL_FREQ_OPTIONS for
+    what each choice means). run_backtest hands a run here when its frequency
+    is not the monthly default, and its own monthly loop is untouched.
+
+    The months, the trade day of each month, the signal date, the basket, the
+    equity picks, the ranking, the position weights, G1, leverage, borrowing
+    costs, trading costs and the three things returned are run_backtest's, and
+    a monthly decision here is made by the same steps in the same order. With
+    params["rebal_freq"] "1M" this function reproduces run_backtest (the
+    Rebalance Frequency check of November 28, 2026 compares the two). What it
+    adds:
+
+    Every 2, 3, 6 or 12 months: a month whose number is not on the cycle
+    (rebal_trade_months) makes no decision and no trade. The holdings carry
+    over at their drifted exposure weights, turnover and trading cost are zero,
+    and the month's return is those weights times each fund's return. A run's
+    first month always trades, and so does a month that follows one with
+    nothing held. A fund that becomes eligible joins at the next trade.
+
+    Every week or every 2 weeks: the month's trade is made as always, then an
+    interim trade every 5 or 10 trading days after it, skipping any with fewer
+    than REBAL_MIN_LEFT trading days left before the next month's trade. Each
+    interim trade is a full decision read at the close before it (the trade
+    day minus one calendar day, as the monthly trade reads its own), with
+    every lookback measured from the last close on or before the date that
+    many calendar months before the signal close. The funds eligible are the
+    month's. Each stretch between two trades is priced, charged and logged as
+    its own holding period, and the month's return is the stretches chained.
+    A borrowing cost is spread over the month's stretches by trading days.
+
+    The trade log has one row per stretch (a month, or part of one when there
+    are interim trades), with a "trade" column: "Scheduled trade", "Interim
+    trade" or "Held (no trade)". The monthly results keep run_backtest's
+    columns: the month's chained return, the leverage at the month's opening,
+    and the month's borrowing cost, turnover and trading cost summed. The
+    daily equity curve is always built with arrays (run_backtest's
+    params["fast_daily"] arithmetic).
+    """
+    fixed_tickers = params["fixed_tickers"]
+    equity_tickers = params["equity_tickers"]
+    equity_top_n = params["equity_top_n"]
+    equity_lookbacks = params["equity_lookbacks"]
+    equity_lookback_weights = params["equity_lookback_weights"]
+    main_lookbacks = params["main_lookbacks"]
+    main_lookback_weights = params["main_lookback_weights"]
+    final_top_n = params["final_top_n"]
+    vol_months = params["vol_months"]
+    backtest_start = params["backtest_start"]
+    backtest_end = resolve_backtest_end(params.get("backtest_end", ""))
+    leverage_params = params.get("leverage_params", {"enabled": False})
+    exec_timing = params.get("exec_timing", "last_day")
+    signal_offset = params.get("signal_offset")
+    if signal_offset is not None:
+        signal_offset = int(signal_offset)
+        if signal_offset == 1:
+            exec_timing, signal_offset = "last_day", None
+        elif signal_offset == 0:
+            exec_timing, signal_offset = "first_day", None
+        else:
+            exec_timing = "offset"
+    cost_per_side = params.get("cost_per_side", DEFAULT_COST_PER_SIDE)
+    cost_per_side = float(cost_per_side) if cost_per_side is not None else 0.0
+    sizing = params.get("sizing", SIZING_IF_UNSET)
+    if sizing not in SIZING_LABELS:
+        raise ValueError(f"unknown position sizing {sizing!r}")
+
+    freq = rebal_freq_of(params)
+    step_days = REBAL_INTERIM_STEP.get(freq)          # trading days between trades inside a month
+    step_months = REBAL_MONTH_STEP.get(freq)          # months between trades
+    trade_months = set(rebal_trade_months(freq, rebal_phase_of(params)))
+    lev_on = bool(leverage_params.get("enabled", False))
+
+    reject_removed_gates(params)
+
+    g1 = params.get("g1") or {}
+    g1_on = bool(g1.get("enabled"))
+    g1_fund = g1.get("fund") if g1_on else None
+    g1_has_fund = (g1_on and g1_fund in monthly_prices.columns and g1_fund in daily_prices.columns
+                   and "BIL" in monthly_prices.columns)
+
+    min_lookback = max(main_lookbacks)
+    valid_months = monthly_prices.index[min_lookback:]
+    seat_standins = equity_seat_standins(params)
+
+    # The exchange calendar, as in run_backtest.
+    all_trading_dates = market_trading_dates(daily_prices)
+
+    def next_trading_day(date):
+        future = all_trading_dates[all_trading_dates > date]
+        if len(future) == 0:
+            return None
+        return future[0]
+
+    def last_trading_day(date):
+        past = all_trading_dates[all_trading_dates <= date]
+        if len(past) == 0:
+            return None
+        return past[-1]
+
+    def resolve_exec_date(month_end_date):
+        """run_backtest's: a calendar month-end label to its execution trading day."""
+        if exec_timing == "first_day":
+            return next_trading_day(month_end_date)
+        if month_end_date > all_trading_dates[-1] and month_end_date.month == all_trading_dates[-1].month and month_end_date.year == all_trading_dates[-1].year:
+            return None
+        last_day = last_trading_day(month_end_date)
+        if exec_timing != "offset" or last_day is None:
+            return last_day
+        pos = int(all_trading_dates.searchsorted(last_day)) + 1 - signal_offset
+        if pos < 0 or pos >= len(all_trading_dates):
+            return None
+        return all_trading_dates[pos]
+
+    daily_ffill = daily_prices.ffill()
+    ff_index = daily_ffill.index
+    ff_values = daily_ffill.to_numpy(dtype=float)
+    col_pos = {c: j for j, c in enumerate(daily_ffill.columns)}
+    # The longest lookback an interim ranking reads, in calendar months.
+    max_back = max(list(main_lookbacks) + list(equity_lookbacks if equity_top_n > 0 and len(equity_tickers) > 0 else []))
+
+    def px_at(t, date):
+        """The last close of t on or before date (nan when it has none yet)."""
+        r = int(ff_index.searchsorted(date, side="right")) - 1
+        return ff_values[r, col_pos[t]] if r >= 0 else np.nan
+
+    def calendar_frame(cols, signal_date):
+        """For an interim trade: the closes of cols at the signal date and at the
+        last close on or before each whole number of calendar months before the
+        signal close, oldest first, one row a month apart, so
+        compute_blended_momentum reads it as it reads the monthly closes."""
+        p = int(all_trading_dates.searchsorted(signal_date, side="right")) - 1
+        sig_close = all_trading_dates[p] if p >= 0 else pd.Timestamp(signal_date)
+        targets = pd.DatetimeIndex(
+            [sig_close - pd.DateOffset(months=k) for k in range(max_back, 0, -1)] + [pd.Timestamp(signal_date)]
+        )
+        rows = ff_index.searchsorted(targets, side="right") - 1
+        js = [col_pos[c] for c in cols]
+        vals = np.full((len(rows), len(js)), np.nan)
+        for a, r in enumerate(rows):
+            if r >= 0:
+                vals[a] = ff_values[r, js]
+        return pd.DataFrame(vals, index=targets, columns=list(cols))
+
+    def month_pool(rebal_date):
+        """The funds eligible for the month after rebal_date, by run_backtest's
+        rule: the fixed funds, and the equity candidates."""
+        fixed_ok = []
+        for t in fixed_tickers:
+            if t in monthly_prices.columns:
+                ps = monthly_prices[t].loc[:rebal_date].dropna()
+                if len(ps) > min_lookback:
+                    fixed_ok.append(t)
+        eq_available = []
+        if equity_top_n > 0 and len(equity_tickers) > 0:
+            for t in equity_pool_for(equity_tickers, rebal_date, seat_standins, monthly_prices.columns):
+                if t in monthly_prices.columns:
+                    ps = monthly_prices[t].loc[:rebal_date].dropna()
+                    min_eq_history = max(max(equity_lookbacks), min_lookback)
+                    if len(ps) > min_eq_history:
+                        eq_available.append(t)
+        return fixed_ok, eq_available
+
+    def decide(rebal_date, signal_date, pool, interim):
+        """One whole decision read at signal_date, by run_backtest's steps. A
+        monthly decision ranks on the monthly closes with the current month's
+        value replaced by the close as of signal_date; an interim one ranks on
+        calendar_frame. None when there is nothing to hold."""
+
+        def frame(cols):
+            if interim:
+                return calendar_frame(cols, signal_date)
+            f = monthly_prices[cols].loc[:rebal_date].copy()
+            if exec_timing in ("last_day", "offset") and len(f) > 0:
+                asof = daily_ffill[cols].loc[:signal_date]
+                if len(asof) > 0:
+                    f.iloc[-1] = asof.iloc[-1]
+            return f
+
+        fixed_ok, eq_available = pool
+        basket = list(fixed_ok)
+        selected_equities = []
+        if equity_top_n > 0 and len(equity_tickers) > 0:
+            if len(eq_available) >= equity_top_n:
+                eq_mom = compute_blended_momentum(frame(eq_available), equity_lookbacks, equity_lookback_weights)
+                latest_eq = eq_mom.iloc[-1].dropna().sort_values(ascending=False)
+                selected_equities = latest_eq.head(equity_top_n).index.tolist()
+            basket.extend(selected_equities)
+        if len(basket) == 0:
+            return None
+
+        basket_mom = compute_blended_momentum(frame(basket), main_lookbacks, main_lookback_weights)
+        latest_basket = basket_mom.iloc[-1].dropna().sort_values(ascending=False)
+        n_select = min(final_top_n, len(latest_basket))
+        final_holdings = latest_basket.head(n_select).index.tolist()
+        if len(final_holdings) == 0:
+            return None
+
+        weights, sizing_note = compute_position_weights(
+            daily_prices[basket], final_holdings, signal_date, vol_months, sizing
+        )
+        g1_status = "off"
+        if g1_on:
+            weights, final_holdings, g1_info = apply_g1_cash_rule(
+                weights, final_holdings, signal_date, g1,
+                frame([g1_fund, "BIL"]) if g1_has_fund else None,
+                daily_ffill, main_lookbacks, main_lookback_weights,
+            )
+            g1_status = g1_info["status"]
+        lev_mult, lev_regime, _lev_detail = compute_leverage_signal(
+            daily_prices, signal_date, leverage_params,
+            final_holdings=final_holdings
+        )
+        return {"holdings": final_holdings, "weights": weights, "sizing": sizing_note, "g1": g1_status,
+                "lev_mult": lev_mult, "lev_regime": lev_regime, "basket": basket,
+                "equities": selected_equities}
+
+    results = []
+    trade_log = []
+    daily_portfolio_values = {}
+    cumulative_multiplier = 1.0
+    prev_drift = {}        # exposure weights drifted to the last exit close (cash at the start)
+    last_dec = None        # the decision in force, for a held stretch's basket and equity columns
+    n_months = len(valid_months)
+
+    for i, rebal_date in enumerate(valid_months):
+        if i >= n_months - 1:
+            break
+
+        next_month_end = valid_months[i + 1]
+
+        exec_date_entry = resolve_exec_date(rebal_date)
+        if exec_date_entry is None:
+            continue
+
+        if exec_timing in ("last_day", "offset"):
+            signal_date = exec_date_entry - pd.Timedelta(days=1)
+        else:
+            signal_date = rebal_date
+
+        # Does this month's trade day trade? Always, unless the frequency is a
+        # number of months and this month is off its cycle with funds in hand.
+        trade_now = step_months is None or rebal_date.month in trade_months or not prev_drift
+        pool = None
+        dec = None
+        if trade_now:
+            pool = month_pool(rebal_date)
+            dec = decide(rebal_date, signal_date, pool, False)
+            if dec is None:
+                continue
+
+        exec_date_exit = resolve_exec_date(next_month_end)
+        if exec_date_exit is None:
+            continue
+
+        # The month's stretches: the trade day, any interim trade days, the exit.
+        p_entry = int(all_trading_dates.searchsorted(exec_date_entry))
+        p_exit = int(all_trading_dates.searchsorted(exec_date_exit))
+        bounds = [exec_date_entry]
+        if step_days:
+            q = p_entry + step_days
+            while q <= p_exit - REBAL_MIN_LEFT:
+                bounds.append(all_trading_dates[q])
+                q += step_days
+        bounds.append(exec_date_exit)
+        n_stretch = len(bounds) - 1
+
+        seg_returns, seg_cost_factors, seg_trading_costs = [], [], []
+        month_turnover = 0.0
+        month_borrow = 0.0
+        month_lev = None
+
+        for j in range(n_stretch):
+            seg_entry, seg_exit = bounds[j], bounds[j + 1]
+
+            if j == 0:
+                seg_dec, seg_signal = dec, signal_date
+            else:
+                seg_signal = seg_entry - pd.Timedelta(days=1)
+                if pool is None:
+                    pool = month_pool(rebal_date)
+                seg_dec = decide(rebal_date, seg_signal, pool, True)
+
+            if seg_dec is not None:
+                last_dec = seg_dec
+                final_holdings = seg_dec["holdings"]
+                weights = seg_dec["weights"]
+                lev_mult = seg_dec["lev_mult"]
+                lev_shown = lev_mult
+                trade_kind = REBAL_TRADE_SCHEDULED if j == 0 else REBAL_TRADE_INTERIM
+            else:
+                # No trade: the funds in hand, at their drifted exposure weights.
+                final_holdings = list(prev_drift)
+                weights = dict(prev_drift)
+                lev_mult = 1.0
+                lev_shown = float(sum(weights.values())) if lev_on else 1.0
+                trade_kind = REBAL_TRADE_HELD
+
+            port_return = 0.0
+            holding_details = {}
+            entry_px = {}
+            for t in final_holdings:
+                p0 = px_at(t, seg_entry)
+                p1 = px_at(t, seg_exit)
+                if np.isfinite(p0) and p0 != 0:
+                    entry_px[t] = p0
+                if not (np.isfinite(p0) and np.isfinite(p1)):
+                    continue
+                if p0 == 0:
+                    continue
+                asset_ret = (p1 / p0) - 1.0
+                w = weights.get(t, 0.0)
+                port_return += w * asset_ret
+                holding_details[t] = {"weight": w, "return": asset_ret}
+
+            port_return = port_return * lev_mult
+
+            # Borrowing cost on the leveraged portion, the month's charge spread
+            # over its stretches by trading days.
+            lev_cost_annual = resolve_borrow_rate(
+                leverage_params.get("leverage_cost_annual", 0.0),
+                seg_entry, seg_exit
+            )
+            seg_borrow = 0.0
+            if lev_cost_annual > 0 and (lev_shown > 1.0 if seg_dec is not None else lev_shown > 1.0 + 1e-9):
+                seg_borrow = (lev_shown - 1.0) * (lev_cost_annual / 12.0)
+                if n_stretch > 1:
+                    seg_days = int(all_trading_dates.searchsorted(seg_exit)) - int(all_trading_dates.searchsorted(seg_entry))
+                    seg_borrow = seg_borrow * seg_days / (p_exit - p_entry)
+                port_return -= seg_borrow
+
+            # Trading costs: run_backtest's, and none on a held stretch.
+            if seg_dec is not None:
+                target_exposure = {t: lev_mult * weights.get(t, 0.0) for t in final_holdings}
+                turnover = 0.5 * sum(
+                    abs(target_exposure.get(t, 0.0) - prev_drift.get(t, 0.0))
+                    for t in sorted(set(target_exposure) | set(prev_drift))
+                )
+            else:
+                target_exposure = dict(weights)
+                turnover = 0.0
+            trading_cost = cost_per_side * turnover if cost_per_side > 0 else 0.0
+            cost_factor = 1.0 - trading_cost
+            port_return_gross = port_return
+            if cost_per_side > 0:
+                port_return = (1.0 + port_return_gross) * cost_factor - 1.0
+
+            growth = 1.0 + port_return_gross
+            if growth > 0:
+                prev_drift = {
+                    t: target_exposure[t] * (1.0 + holding_details.get(t, {}).get("return", 0.0)) / growth
+                    for t in final_holdings
+                }
+            else:
+                prev_drift = {}
+
+            # Daily equity for the stretch (run_backtest's fast_daily arithmetic).
+            lo = int(ff_index.searchsorted(seg_entry, side="left"))
+            hi = int(ff_index.searchsorted(seg_exit, side="right"))
+            holding_days = ff_index[lo:hi]
+            n_holding_days = len(holding_days)
+            if n_holding_days > 0:
+                _dwr = np.zeros(n_holding_days)
+                for t in final_holdings:
+                    if t not in entry_px:
+                        continue
+                    _dwr = _dwr + weights.get(t, 0.0) * (
+                        (ff_values[lo:hi, col_pos[t]] / entry_px[t]) - 1.0
+                    )
+                _acc = np.zeros(n_holding_days)
+                if seg_borrow > 0:
+                    _acc = seg_borrow * np.arange(1, n_holding_days + 1) / n_holding_days
+                _dcf = np.full(n_holding_days, cost_factor)
+                _dcf[0] = 1.0
+                _vals = cumulative_multiplier * _dcf * (1 + _dwr * lev_mult - _acc) * INITIAL_CAPITAL
+                daily_portfolio_values.update(zip(holding_days, _vals.tolist()))
+
+            cumulative_multiplier *= (1 + port_return)
+
+            seg_returns.append(port_return)
+            seg_cost_factors.append(cost_factor)
+            seg_trading_costs.append(trading_cost)
+            month_turnover += turnover
+            month_borrow += seg_borrow
+            if month_lev is None:
+                month_lev = lev_shown
+
+            holdings_str_parts = []
+            for t in final_holdings:
+                if t in holding_details:
+                    w = weights.get(t, 0.0)
+                    r = holding_details[t]["return"]
+                    holdings_str_parts.append(f"{t}: {w:.1%} (ret: {r:+.2%})")
+
+            traded = seg_dec is not None
+            shown = last_dec or {}
+            last_stretch = j == n_stretch - 1
+            trade_log.append({
+                "rebal_date": rebal_date.strftime("%Y-%m-%d"),
+                "signal_date": seg_signal.strftime("%Y-%m-%d") if traded else "",
+                "hold_month": next_month_end.strftime("%Y-%m"),
+                "trade": trade_kind,
+                "exec_entry": seg_entry.strftime("%Y-%m-%d"),
+                "exec_exit": seg_exit.strftime("%Y-%m-%d") if (not last_stretch or i < n_months - 2) else "",
+                "basket": ", ".join(shown.get("basket", [])),
+                "equities_selected": ", ".join(shown.get("equities", [])) if shown.get("equities") else "N/A",
+                "g1": seg_dec["g1"] if traded else "held",
+                "sizing": seg_dec["sizing"] if traded else REBAL_TRADE_HELD,
+                "final_holdings": " | ".join(holdings_str_parts),
+                "leverage": f"{lev_shown:.2f}x",
+                "lev_regime": seg_dec["lev_regime"] if traded else "held",
+                "turnover": f"{turnover:.1%}",
+                "trading_cost": f"{trading_cost:.3%}",
+                "portfolio_return": f"{port_return:+.2%}",
+            })
+            if not g1_on:
+                del trade_log[-1]["g1"]
+
+        if n_stretch == 1:
+            month_return, month_cost = seg_returns[0], seg_trading_costs[0]
+        else:
+            month_return = float(np.prod([1.0 + r for r in seg_returns])) - 1.0
+            month_cost = 1.0 - float(np.prod(seg_cost_factors))
+
+        results.append({
+            "date": next_month_end,
+            "portfolio_return": month_return,
+            "leverage_mult": month_lev,
+            "borrow_cost": month_borrow,
+            "turnover": month_turnover,
+            "trading_cost": month_cost,
+        })
+
+    results_df = pd.DataFrame(results).set_index("date")
+    trade_df = pd.DataFrame(trade_log)
+
+    if len(results_df) > 0:
+        results_df = results_df[results_df.index >= backtest_start]
+        trade_df = trade_df[trade_df["hold_month"] >= backtest_start].reset_index(drop=True)
+
+        if backtest_end:
+            results_df = results_df[results_df.index <= backtest_end]
+            trade_df = trade_df[trade_df["hold_month"] <= backtest_end].reset_index(drop=True)
+
     if daily_portfolio_values:
         daily_equity = pd.Series(daily_portfolio_values).sort_index()
         if backtest_start:
@@ -3316,6 +3887,7 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
         "Position Sizing": SIZING_LABELS[params.get("sizing", SIZING_IF_UNSET)],
         "ERC Fallback Months": params.get("erc_fallback_summary", "not an ERC run"),
         "Execution": params.get("exec_timing_label", params.get("exec_timing", "last_day")),
+        "Rebalance": rebal_text(params, cap=True),
         "Trading Cost (per side)": f"{params.get('cost_per_side', DEFAULT_COST_PER_SIDE):.2%}",
         "Leverage": lev_summary,
         "G1 Cash Rule": g1_label(params.get("g1")),
@@ -3349,6 +3921,9 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
             # volatility, the only position sizing the engine had until then.
             existing["Position Sizing"] = SIZING_LABELS["inverse_vol"]
             existing["ERC Fallback Months"] = "not an ERC run"
+        if "Rebalance" not in existing.columns:
+            # Every run logged before November 28, 2026 rebalanced every month.
+            existing["Rebalance"] = rebal_text({}, cap=True)
         combined = pd.concat([existing, new_row_df], ignore_index=True)
     else:
         combined = new_row_df
@@ -3360,6 +3935,13 @@ def append_to_excel(params, strat_metrics, bench_metrics, filepath):
             if c in cols:
                 cols.remove(c)
                 cols.insert(cols.index("Vol Window (months)") + 1, c)
+        combined = combined[cols]
+
+    # Keep the rebalance frequency beside the trade day (November 28, 2026).
+    cols = list(combined.columns)
+    if "Rebalance" in cols and "Execution" in cols:
+        cols.remove("Rebalance")
+        cols.insert(cols.index("Execution") + 1, "Rebalance")
         combined = combined[cols]
 
     combined.to_excel(filepath, index=False, engine="openpyxl")
@@ -5224,6 +5806,10 @@ def rc_base_key(params, fingerprint):
         "g1": params.get("g1") or {},
         "prices": fingerprint,
     }
+    # The rebalance frequency (November 28, 2026), left out at the monthly default so the
+    # runs saved before it still serve.
+    if rebal_freq_of(params) != REBAL_FREQ_DEFAULT:
+        base["rebal"] = [rebal_freq_of(params), rebal_phase_of(params)]
     return json.dumps(_rc_plain(base), sort_keys=True)
 
 
@@ -6544,6 +7130,9 @@ def ds_signature(params, rules):
         "leverage": lev if lev.get("enabled") else {},
         "g1": {k: v for k, v in g1.items() if k != "yield_series"} if g1.get("enabled") else {},
         "rules": [[k, list(v)] for k, v in rules.items()],
+        # The rebalance frequency (November 28, 2026), left out at the monthly default.
+        **({"rebal": [rebal_freq_of(params), rebal_phase_of(params)]}
+           if rebal_freq_of(params) != REBAL_FREQ_DEFAULT else {}),
     }), sort_keys=True)
 
 
@@ -6576,6 +7165,7 @@ def ds_changes(params, rules, base_params, base_rules):
     lookback("Main lookback", "main_lookback")
     moved("Holdings", int(base_params["final_top_n"]), int(params["final_top_n"]))
     moved("Trade day", rc_trade_noun(rc_current_offset(base_params)), rc_trade_noun(rc_current_offset(params)))
+    moved("Rebalance", rebal_text(base_params), rebal_text(params))
     moved("Position sizing", rc_sizing_name(base_params.get("sizing", SIZING_IF_UNSET)).lower(),
           rc_sizing_name(params.get("sizing", SIZING_IF_UNSET)).lower())
     moved("Volatility window", int(base_params["vol_months"]), int(params["vol_months"]), " months")
@@ -6721,6 +7311,8 @@ def ds_held(trade_df):
     if trade_df is None or len(trade_df) == 0 or "final_holdings" not in trade_df.columns:
         return out
     for month, text in zip(trade_df["hold_month"], trade_df["final_holdings"]):
+        if str(month) in out:
+            continue    # with interim trades a month has several rows: keep the funds it opened with
         out[str(month)] = frozenset(part.split(":")[0].strip() for part in str(text).split(" | ") if ":" in part)
     return out
 
@@ -7155,6 +7747,47 @@ exec_timing_label = st.sidebar.selectbox(
 )
 exec_offset = EXEC_TIMING_OPTIONS[exec_timing_label]
 exec_timing = {1: "last_day", 0: "first_day"}.get(exec_offset, "offset")
+
+# Rebalance frequency (added November 28, 2026; see REBAL_FREQ_OPTIONS). Every
+# month is the starting choice and runs run_backtest's own monthly loop, so the
+# results and the saved runs at that choice are what they were. A cycle of 2,
+# 3, 6 or 12 months also asks which months trade (params["rebal_phase"]).
+rebal_freq_label = st.sidebar.selectbox(
+    "Rebalance frequency",
+    options=list(REBAL_FREQ_OPTIONS.keys()),
+    index=list(REBAL_FREQ_OPTIONS.values()).index(REBAL_FREQ_DEFAULT),
+    key="rebal_freq",
+    help=(
+        "How often the whole decision (the ranking, the equity picks, the "
+        "holdings and their weights) is redone and traded. Every month is the "
+        "strategy as it runs, and the default. "
+        "Every 2, 3 or 6 months, or every year: the trade is made only in the "
+        "cycle's months, on the trade day above. In the months between, the "
+        "holdings are kept, their weights drift with their prices, and nothing "
+        "is traded or charged. "
+        "Every week or every 2 weeks: the month's trade, plus a trade every 5 "
+        "or 10 trading days after it (none in the last 3 trading days before "
+        "the next month's trade). Each is read at the close before it, with "
+        "the lookbacks measured in calendar months back from that close. "
+        "These two take longer to run."
+    ),
+)
+rebal_freq = REBAL_FREQ_OPTIONS[rebal_freq_label]
+rebal_phase = 0
+if rebal_freq in REBAL_MONTH_STEP:
+    rebal_phase = st.sidebar.selectbox(
+        "Months that trade",
+        options=list(range(REBAL_MONTH_STEP[rebal_freq])),
+        format_func=lambda _p: rebal_phase_label(rebal_freq, _p),
+        key=f"rebal_phase_{rebal_freq}",
+        help=(
+            "Where the cycle sits in the year. Each trade is the one for the "
+            "month named, on the trade day above: with the last trading day "
+            "of the month, Dec is the last trading day of December. At a long "
+            "cycle the result can depend a good deal on which months trade, "
+            "so it is worth running each."
+        ),
+    )
 
 sizing_label = st.sidebar.selectbox(
     "Position sizing",
@@ -8339,6 +8972,10 @@ if run_button:
                     "exec_timing": exec_timing,
                     "exec_timing_label": exec_timing_label,
                     **({"signal_offset": exec_offset} if exec_timing == "offset" else {}),
+                    # The rebalance frequency, left out at the monthly default, so a default
+                    # run's params are what they were before the choice (November 28, 2026).
+                    **({"rebal_freq": rebal_freq, "rebal_phase": rebal_phase}
+                       if rebal_freq != REBAL_FREQ_DEFAULT else {}),
                     "cost_per_side": cost_per_side,
                     "backtest_start": backtest_start,
                     "backtest_end": backtest_end,
@@ -8852,6 +9489,8 @@ if run_button:
 
                         ae_md(ae_h3("Run notes", anchor="ov-notes"))
                         _notes = [("Trading costs", _cost_note), ("Position sizing", sizing_info["line"])]
+                        if rebal_note(params):
+                            _notes.append(("Rebalance frequency", rebal_note(params)))
                         if _dd_note:
                             _notes.append(("Worst drawdown", _dd_note))
                         _notes.append(("How it is calculated", _method_note))
@@ -9203,8 +9842,11 @@ if run_button:
                         # ---- TRADE LOG ----
                         trade_df_display = trade_df.iloc[::-1].reset_index(drop=True)
                         ae_md(ae_h3("Trade log",
-                                    "Most recent first. Each chip is a holding, its weight and its return that month. "
-                                    f"The sizing column says how each month was weighted ({ae_esc(sizing_info['label'])} in this run).",
+                                    ("Most recent first. Each chip is a holding, its weight and its return that month. "
+                                     if "trade" not in trade_df.columns else
+                                     "Most recent first, one row for each stretch between trades. Each chip is a holding, "
+                                     "its weight at the start of the stretch and its return over it. ")
+                                    + f"The sizing column says how each month was weighted ({ae_esc(sizing_info['label'])} in this run).",
                                     anchor="td-log"))
                         _has_lev = leverage_params_ui.get("enabled", False) and "leverage" in trade_df_display.columns
                         _th = ('<div class="ae-tbl"><table><thead><tr><th>Month held</th><th class="l">Holdings, weight and return</th>'
@@ -9221,6 +9863,10 @@ if run_button:
                             try:
                                 _ent = pd.Timestamp(_r.get("exec_entry"))
                                 _ent_txt = f"traded {_ent:%b} {_ent.day}"
+                                if _r.get("trade") == REBAL_TRADE_HELD:
+                                    _ent_txt = "held, no trade"
+                                elif _r.get("trade") == REBAL_TRADE_INTERIM:
+                                    _ent_txt = f"interim trade {_ent:%b} {_ent.day}"
                             except Exception:
                                 _ent_txt = ""
                             _tr.append(f'<tr><td class="l ae-nw"><div style="font-weight:600">{ae_esc(_hm_txt)}</div>'
@@ -9232,7 +9878,8 @@ if run_button:
                                        + (f'<td>{ae_esc(_r.get("leverage", ""))}</td>' if _has_lev else "")
                                        + f'<td class="l ae-small">{ae_esc(_r.get("sizing", ""))}</td></tr>')
                         ae_md(_th + "".join(_tr) + "</tbody></table></div>")
-                        with st.expander(f"Full trade log, all {len(trade_df_display)} months"):
+                        with st.expander(f"Full trade log, all {len(trade_df_display)} "
+                                         + ("months" if "trade" not in trade_df.columns else "rows")):
                             st.dataframe(trade_df_display, width="stretch", hide_index=True)
 
                         # ---- DOWNLOADS ----
@@ -9270,6 +9917,7 @@ if run_button:
                                 ("Equity selection", f"Top {equity_top_n} from {', '.join(selected_equity)}" if equity_top_n > 0 else "None"),
                                 ("Final", f"Top {final_top_n} by {main_lookback_label}, {sizing_info['final']}"),
                                 ("Trade day", exec_timing_label),
+                                ("Rebalance", rebal_text(params, cap=True)),
                                 ("Trading cost", f"{cost_per_side:.2%} per side" if cost_per_side > 0 else "None (gross)"),
                                 ("Period", f"{_p0:%Y-%m} to {_p1:%Y-%m}")]
                         if _sensitivity_run:
