@@ -780,15 +780,20 @@ DEFAULT_COST_PER_SIDE = 0.0005
 #                  C:\Users\tyler\OneDrive\PROJECTS\Strategy Backtesting System\Basket Research\ETF Scouting\ERC Weights Test 2026-11-12\
 #   "inverse_vol"  inverse volatility (simple risk parity), the method until
 #                  then: compute_risk_parity_weights, unchanged.
+#   "equal"        equal weight (added November 28, 2026, at Tyler's request):
+#                  every final holding gets the same weight, 25% each with
+#                  four holdings and 20% with five. No volatility is read, so
+#                  the volatility window does nothing in such a run.
 # run_backtest and compute_current_signals read params["sizing"]. A caller that
 # leaves it out (research scripts and tools written before the option) gets
 # inverse volatility, so nothing outside the app changes method until it asks.
 SIZING_OPTIONS = {
     "Equal risk contribution (ERC)": "erc",
     "Inverse volatility (simple risk parity)": "inverse_vol",
+    "Equal weight": "equal",
 }
 SIZING_LABELS = {v: k for k, v in SIZING_OPTIONS.items()}
-SIZING_FILE_TAGS = {"erc": "ERC", "inverse_vol": "Inverse vol"}
+SIZING_FILE_TAGS = {"erc": "ERC", "inverse_vol": "Inverse vol", "equal": "Equal weight"}
 SIZING_DEFAULT = "erc"            # the sidebar's starting choice
 SIZING_IF_UNSET = "inverse_vol"   # for callers that pass no params["sizing"]
 ERC_KEEP = ("BIL",)               # keep their inverse-volatility weight, outside the ERC split
@@ -1762,6 +1767,9 @@ def compute_position_weights(daily_prices, selected_tickers, as_of_date, vol_mon
     "Inverse vol", "ERC", or "Inverse vol (ERC fallback: <reason>)".
 
     "inverse_vol": compute_risk_parity_weights, unchanged.
+    "equal" (added November 28, 2026): every holding gets 1 over the number
+    of holdings, and the note is "Equal weight". Nothing is read from the
+    prices, so vol_months does nothing.
     "erc": the holdings in ERC_KEEP (BIL) keep the weight
     compute_risk_parity_weights gives them, and the rest of the portfolio is
     split among the other holdings by equal risk contribution (solve_erc) on
@@ -1775,6 +1783,9 @@ def compute_position_weights(daily_prices, selected_tickers, as_of_date, vol_mon
     new_weights_x in MV252 Harness.py with the ERC Weights Test's ERC12m
     setting.
     """
+    if sizing == "equal":
+        n = len(selected_tickers)
+        return {t: 1.0 / n for t in selected_tickers}, "Equal weight"
     iv = compute_risk_parity_weights(daily_prices, selected_tickers, as_of_date, vol_months)
     if sizing == "inverse_vol":
         return iv, "Inverse vol"
@@ -1824,6 +1835,14 @@ def describe_sizing(params, trade_df=None):
     sizing = params.get("sizing", SIZING_IF_UNSET)
     vm = int(params.get("vol_months", 12))
     info = {"label": SIZING_LABELS[sizing], "file_tag": SIZING_FILE_TAGS[sizing], "fallback": "not an ERC run"}
+    if sizing == "equal":
+        info["final"] = "equal weight"
+        info["line"] = "Position sizing: equal weight, every holding the same share of the portfolio."
+        info["note"] = (
+            "Position sizing: equal weight, each holding at 1 over the number of holdings (25% each with "
+            "four, 20% with five). No volatility is read, so the volatility window does nothing in this run."
+        )
+        return info
     if sizing == "inverse_vol":
         info["final"] = f"inverse volatility ({vm}mo vol)"
         info["line"] = f"Position sizing: inverse volatility (simple risk parity) on the {vm}-month window."
@@ -5093,7 +5112,7 @@ DDC_BACKTEST = "#B3ACD8"  # this backtest's drawdowns: a light tint of the strat
 DDC_BAND = "#F1EFF8"
 DDC_BAND_EDGE = "#C9C3E3"
 DDC_BENCH = [("80/20", "AOA"), ("S&P 500", "SPY")]
-DDC_SIZING_WORDS = {"erc": "equal risk contribution", "inverse_vol": "inverse volatility"}
+DDC_SIZING_WORDS = {"erc": "equal risk contribution", "inverse_vol": "inverse volatility", "equal": "equal weight"}
 DDC_SINCE_WINDOW = "1981-01"  # printed beside a band window that starts before it (November 25, 2026)
 
 
@@ -5548,7 +5567,11 @@ RC_MODE_DEFAULT = "quick" if RC_ON_PC else "off"
 RC_ENGINE_FILE = os.path.abspath(__file__) if "__file__" in dir() else None
 RC_POOL_MIN = 3                             # fewer new runs than this are not worth a pool
 RC_POOL_MAX = 12                            # worker processes at most
-RC_SIZING_NAMES = {"erc": "Equal risk contribution", "inverse_vol": "Inverse volatility"}
+RC_SIZING_NAMES = {"erc": "Equal risk contribution", "inverse_vol": "Inverse volatility", "equal": "Equal weight"}
+# The sizing methods the panel sets a run beside. Equal weight (added November 28, 2026) is not one of
+# them, so the check of an ERC or inverse-volatility run, and its saved runs, are what they were; an
+# equal-weight run is set beside both.
+RC_SIZING_COMPARED = ("erc", "inverse_vol")
 # Inverse volatility was the sizing method until November 2026, and the app
 # called it risk parity then; the panel says so wherever it names it.
 RC_SIZING_NOTES = {"inverse_vol": "the method used until November 2026, previously called risk parity"}
@@ -5691,7 +5714,7 @@ def rc_plan(params, extras=()):
         "cells": [rc_spec(params, lb=c) for c in cells],
         "block": [rc_spec(params, lb=c, k=d) for c in cells for d in near_days],
         "strip": [rc_spec(params, k=d) for d in rc_strip_days(k0)],
-        "sizing": {s: [rc_spec(params, lb=c, sizing=s) for c in cells] for s in SIZING_LABELS if s != sizing0},
+        "sizing": {s: [rc_spec(params, lb=c, sizing=s) for c in cells] for s in RC_SIZING_COMPARED if s != sizing0},
         "vol": {v: [rc_spec(params, lb=c, vol=v) for c in cells]
                 for v in sorted({min(24, max(3, x)) for x in (v0 - 6, v0 + 6, v0 + 12)} - {v0})},
         "topn": ({n: rc_spec(params, topn=n) for n in (n0 - 1, n0 + 1) if n >= 1} if "topn" in extras else {}),
@@ -7802,7 +7825,9 @@ sizing_label = st.sidebar.selectbox(
         "little data uses inverse volatility, and the results say how often. "
         "Inverse volatility (simple risk parity), the method until then: each "
         "holding's weight is in proportion to 1 over its volatility, so a fund "
-        "half as volatile gets twice the weight, and correlations are ignored."
+        "half as volatile gets twice the weight, and correlations are ignored. "
+        "Equal weight: every holding gets the same weight, 25% each with four "
+        "holdings and 20% with five, and the volatility window is not used."
     ),
 )
 sizing = SIZING_OPTIONS[sizing_label]
